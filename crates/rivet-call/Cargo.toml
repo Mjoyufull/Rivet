@@ -1,0 +1,14 @@
+[package]
+name = "rivet-call"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+matrix-sdk.workspace = true
+livekit.workspace = true
+rivet-core = { path = "../rivet-core" }
+ruma.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+serde.workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "rivet-ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+rivet-core = { path = "../rivet-core" }
+rivet-call = { path = "../rivet-call" }
+matrix-sdk.workspace = true
+matrix-sdk-ui.workspace = true
+imbl = "2.0"
+tokio.workspace = true
+serde.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+anyhow.workspace = true
+chrono.workspace = true
+humansize.workspace = true
+log.workspace = true
+lazy_static = "1.4"
+futures = "0.3.31"
+url = "2"
+open = "5"
+image = "0.25"

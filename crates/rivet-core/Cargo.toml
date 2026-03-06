@@ -1,0 +1,15 @@
+[package]
+name = "rivet-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+matrix-sdk.workspace = true
+matrix-sdk-ui.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+futures-util = "0.3"
+url = "2"
