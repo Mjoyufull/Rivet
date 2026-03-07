@@ -6622,6 +6622,7 @@ dependencies = [
  "open",
  "rivet-call",
  "rivet-core",
+ "rust-embed",
  "serde",
  "tokio",
  "tracing",

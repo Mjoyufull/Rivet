@@ -1020,31 +1020,36 @@ fn render_modern_image(
         .into_any_element()
 }
 
-fn render_system_row(content: &str, timestamp: &str, theme: &OneDarkTheme) -> AnyElement {
+fn render_system_row(content: &str, timestamp: &str, arrow: Option<&str>, theme: &OneDarkTheme) -> AnyElement {
+    let mut row = div()
+        .flex()
+        .items_start()
+        .gap_3()
+        .text_xs();
+        
+    if let Some(arrow_str) = arrow {
+        row = row.child(div().text_color(theme.text_muted).child(arrow_str.to_string()));
+    }
+
+    row = row
+        .child(
+            div()
+                .flex_1()
+                .text_color(theme.text_muted)
+                .child(content.to_string()),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .whitespace_nowrap()
+                .child(timestamp.to_string()),
+        );
+
     div()
         .px_5()
         .py_1()
-        .child(
-            div()
-                .flex()
-                .items_start()
-                .gap_3()
-                .text_xs()
-                .child(div().text_color(theme.text_muted).child("<-"))
-                .child(
-                    div()
-                        .flex_1()
-                        .text_color(theme.text_muted)
-                        .child(content.to_string()),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .whitespace_nowrap()
-                        .child(timestamp.to_string()),
-                ),
-        )
+        .child(row)
         .into_any_element()
 }
 
@@ -1112,7 +1117,6 @@ fn render_timeline_intro(
 fn render_call_group(
     id: &str,
     sender_name: &str,
-    avatar_url: Option<&String>,
     label: &str,
     entries: &[RenderedCallEntry],
     expanded: bool,
@@ -1164,14 +1168,21 @@ fn render_call_group(
                         .flex()
                         .items_center()
                         .gap_3()
-                        .child(render_avatar(
-                            avatar_url,
-                            sender_name,
-                            sender_name,
-                            px(32.0),
-                            theme,
-                            cx,
-                        ))
+                        .child(
+                            div()
+                                .size(px(32.0))
+                                .flex_shrink_0()
+                                .corner_radii(Corners::all(avatar_radius_for(px(32.0), cx)))
+                                .bg(theme.accent.opacity(0.2))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    gpui_component::Icon::empty()
+                                        .path("icons/phone-call.svg")
+                                        .text_color(theme.accent),
+                                ),
+                        )
                         .child(
                             div()
                                 .flex_1()
@@ -1199,10 +1210,13 @@ fn render_call_group(
                         .child(
                             div()
                                 .cursor_pointer()
-                                .text_xs()
                                 .text_color(theme.text_muted)
                                 .hover(|this| this.text_color(theme.text))
-                                .child(if expanded { "v" } else { ">" })
+                                .child(if expanded {
+                                    gpui_component::IconName::ChevronDown
+                                } else {
+                                    gpui_component::IconName::ChevronRight
+                                })
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     let _ = view.update(cx, |this, cx| {
                                         this.toggle_call_group(&id, cx);
@@ -1425,18 +1439,16 @@ impl Render for TimelineView {
                     ),
                 },
                 RenderedTimelineItem::System {
-                    content, timestamp, ..
-                } => render_system_row(content, timestamp, &theme),
+                    content, timestamp, arrow, ..
+                } => render_system_row(content, timestamp, arrow.as_deref(), &theme),
                 RenderedTimelineItem::CallGroup {
                     id,
                     sender_name,
-                    avatar_url,
                     label,
                     entries,
                 } => render_call_group(
                     id,
                     sender_name,
-                    avatar_url.as_ref(),
                     label,
                     entries,
                     expanded_call_groups.contains(id),

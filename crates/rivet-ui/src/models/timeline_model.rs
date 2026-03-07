@@ -82,11 +82,11 @@ pub enum RenderedTimelineItem {
         id: String,
         content: String,
         timestamp: String,
+        arrow: Option<String>,
     },
     CallGroup {
         id: String,
         sender_name: String,
-        avatar_url: Option<String>,
         label: String,
         entries: Vec<RenderedCallEntry>,
     },
@@ -227,13 +227,20 @@ fn format_membership_change(
     membership_change: &RoomMembershipChange,
     sender_name: &str,
     sender_id: &str,
-) -> String {
+) -> (String, Option<String>) {
     let target_display_name = membership_change
         .display_name()
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| fallback_sender_name(membership_change.user_id().as_str()));
 
-    match effective_membership_change(membership_change, sender_id) {
+    let change = effective_membership_change(membership_change, sender_id);
+    let arrow = match change {
+        MembershipChange::Joined | MembershipChange::Invited | MembershipChange::InvitationAccepted | MembershipChange::Knocked | MembershipChange::KnockAccepted => Some("->".to_string()),
+        MembershipChange::Left | MembershipChange::Banned | MembershipChange::KickedAndBanned | MembershipChange::Kicked | MembershipChange::InvitationRejected | MembershipChange::InvitationRevoked | MembershipChange::KnockRetracted | MembershipChange::KnockDenied => Some("-->".to_string()),
+        _ => None,
+    };
+
+    let content = match change {
         MembershipChange::Joined => format!("{target_display_name} joined the room."),
         MembershipChange::Left => format!("{target_display_name} left the room."),
         MembershipChange::Banned | MembershipChange::KickedAndBanned => {
@@ -265,103 +272,104 @@ fn format_membership_change(
         MembershipChange::None | MembershipChange::Error | MembershipChange::NotImplemented => {
             format!("{target_display_name}'s membership changed.")
         }
-    }
+    };
+    (content, arrow)
 }
 
-fn format_profile_change(profile_change: &MemberProfileChange, sender_name: &str) -> String {
-    if let Some(displayname) = profile_change.displayname_change() {
+fn format_profile_change(profile_change: &MemberProfileChange, sender_name: &str) -> (String, Option<String>) {
+    let content = if let Some(displayname) = profile_change.displayname_change() {
         if let Some(previous_name) = &displayname.old {
             if let Some(new_name) = &displayname.new {
-                return format!("{previous_name} changed their display name to {new_name}.");
+                format!("{previous_name} changed their display name to {new_name}.")
+            } else {
+                format!("{previous_name} removed their display name.")
             }
-
-            return format!("{previous_name} removed their display name.");
-        }
-
-        if let Some(new_name) = &displayname.new {
-            return format!(
+        } else if let Some(new_name) = &displayname.new {
+            format!(
                 "{} set their display name to {new_name}.",
                 fallback_sender_name(profile_change.user_id().as_str())
-            );
+            )
+        } else {
+            format!("{sender_name} updated their profile.")
         }
-    }
-
-    if let Some(avatar_url) = profile_change.avatar_url_change() {
+    } else if let Some(avatar_url) = profile_change.avatar_url_change() {
         if avatar_url.old.is_none() {
-            return format!("{sender_name} set their avatar.");
+            format!("{sender_name} set their avatar.")
+        } else if avatar_url.new.is_none() {
+            format!("{sender_name} removed their avatar.")
+        } else {
+            format!("{sender_name} changed their avatar.")
         }
-        if avatar_url.new.is_none() {
-            return format!("{sender_name} removed their avatar.");
-        }
-        return format!("{sender_name} changed their avatar.");
-    }
-
-    format!("{sender_name} updated their profile.")
+    } else {
+        format!("{sender_name} updated their profile.")
+    };
+    (content, None)
 }
 
-fn format_other_state(other_state: &OtherState, sender_name: &str) -> String {
-    match other_state.content() {
+fn format_other_state(other_state: &OtherState, sender_name: &str) -> Option<(String, Option<String>)> {
+    let (content, arrow) = match other_state.content() {
         AnyOtherFullStateEventContent::RoomCreate(_) => {
-            format!("{sender_name} created the room.")
+            (format!("{sender_name} created the room."), Some("->".to_string()))
         }
         AnyOtherFullStateEventContent::RoomEncryption(_) => {
-            "This room is encrypted from this point on.".to_string()
+            ("This room is encrypted from this point on.".to_string(), None)
         }
         AnyOtherFullStateEventContent::RoomName(_) => {
-            format!("{sender_name} changed the room name.")
+            (format!("{sender_name} changed the room name."), None)
         }
         AnyOtherFullStateEventContent::RoomTopic(_) => {
-            format!("{sender_name} changed the room topic.")
+            (format!("{sender_name} changed the room topic."), None)
         }
         AnyOtherFullStateEventContent::RoomAvatar(_) => {
-            format!("{sender_name} changed the room avatar.")
+            (format!("{sender_name} changed the room avatar."), None)
         }
         AnyOtherFullStateEventContent::RoomAliases(_) => {
-            format!("{sender_name} updated the room aliases.")
+            (format!("{sender_name} updated the room aliases."), None)
         }
         AnyOtherFullStateEventContent::RoomCanonicalAlias(_) => {
-            format!("{sender_name} changed the room alias.")
+            (format!("{sender_name} changed the room alias."), None)
         }
         AnyOtherFullStateEventContent::RoomGuestAccess(_) => {
-            format!("{sender_name} changed guest access.")
+            (format!("{sender_name} changed guest access."), None)
         }
         AnyOtherFullStateEventContent::RoomHistoryVisibility(_) => {
-            format!("{sender_name} changed history visibility.")
+            (format!("{sender_name} changed history visibility."), None)
         }
         AnyOtherFullStateEventContent::RoomJoinRules(_) => {
-            format!("{sender_name} changed join rules.")
+            (format!("{sender_name} changed join rules."), None)
         }
         AnyOtherFullStateEventContent::RoomPinnedEvents(_) => {
-            format!("{sender_name} updated pinned messages.")
+            (format!("{sender_name} updated pinned messages."), None)
         }
         AnyOtherFullStateEventContent::RoomPowerLevels(_) => {
-            format!("{sender_name} updated room permissions.")
+            (format!("{sender_name} updated room permissions."), None)
         }
         AnyOtherFullStateEventContent::RoomServerAcl(_) => {
-            format!("{sender_name} updated the server ACL.")
+            (format!("{sender_name} updated the server ACL."), None)
         }
         AnyOtherFullStateEventContent::RoomThirdPartyInvite(_) => {
-            format!("{sender_name} created a third-party invite.")
+            (format!("{sender_name} created a third-party invite."), None)
         }
         AnyOtherFullStateEventContent::RoomTombstone(_) => {
-            "This room has been replaced with a newer room.".to_string()
+            ("This room has been replaced with a newer room.".to_string(), None)
         }
         AnyOtherFullStateEventContent::SpaceChild(_)
         | AnyOtherFullStateEventContent::SpaceParent(_) => {
-            format!("{sender_name} updated the space hierarchy.")
+            (format!("{sender_name} updated the space hierarchy."), None)
         }
         AnyOtherFullStateEventContent::PolicyRuleRoom(_)
         | AnyOtherFullStateEventContent::PolicyRuleServer(_)
         | AnyOtherFullStateEventContent::PolicyRuleUser(_) => {
-            format!("{sender_name} updated a room policy.")
+            (format!("{sender_name} updated a room policy."), None)
         }
         AnyOtherFullStateEventContent::_Custom { event_type } => {
             if event_type == "org.matrix.msc3401.call.member" {
-                return format!("{sender_name} updated call membership.");
+                return None;
             }
-            format!("{sender_name} sent a state event: {event_type}.")
+            (format!("{sender_name} sent a state event: {event_type}."), None)
         }
-    }
+    };
+    Some((content, arrow))
 }
 
 fn room_media_source_url(source: &matrix_sdk::ruma::events::room::MediaSource) -> String {
@@ -468,11 +476,10 @@ fn render_reply_preview(
 
 #[derive(Clone, Debug)]
 struct PendingCallEntry {
-    id: String,
-    sender_name: String,
-    avatar_url: Option<String>,
-    content: String,
-    timestamp: String,
+    pub id: String,
+    pub sender_name: String,
+    pub content: String,
+    pub timestamp: String,
 }
 
 fn flush_call_group(
@@ -501,7 +508,6 @@ fn flush_call_group(
     rendered.push_back(RenderedTimelineItem::CallGroup {
         id: format!("call-group-{}", first.id),
         sender_name: first.sender_name.clone(),
-        avatar_url: first.avatar_url.clone(),
         label,
         entries,
     });
@@ -919,6 +925,7 @@ impl TimelineModel {
                             id,
                             content: server_notice.body.clone(),
                             timestamp: formatted_timestamp.clone(),
+                            arrow: None,
                         })
                     }
                     _ => Some(RenderedTimelineItem::Message {
@@ -983,24 +990,31 @@ impl TimelineModel {
             } else {
                 match event.content() {
                     TimelineItemContent::MembershipChange(change) => {
+                        let (content, arrow) = format_membership_change(change, &sender_name, &sender_id);
                         Some(RenderedTimelineItem::System {
                             id,
-                            content: format_membership_change(change, &sender_name, &sender_id),
+                            content,
                             timestamp: formatted_timestamp.clone(),
+                            arrow,
                         })
                     }
                     TimelineItemContent::ProfileChange(change) => {
+                        let (content, arrow) = format_profile_change(change, &sender_name);
                         Some(RenderedTimelineItem::System {
                             id,
-                            content: format_profile_change(change, &sender_name),
+                            content,
                             timestamp: formatted_timestamp.clone(),
+                            arrow,
                         })
                     }
                     TimelineItemContent::OtherState(other_state) => {
-                        Some(RenderedTimelineItem::System {
-                            id,
-                            content: format_other_state(other_state, &sender_name),
-                            timestamp: formatted_timestamp.clone(),
+                        format_other_state(other_state, &sender_name).map(|(content, arrow)| {
+                            RenderedTimelineItem::System {
+                                id,
+                                content,
+                                timestamp: formatted_timestamp.clone(),
+                                arrow,
+                            }
                         })
                     }
                     TimelineItemContent::FailedToParseMessageLike { event_type, .. } => {
@@ -1010,6 +1024,7 @@ impl TimelineModel {
                                 "{sender_name} sent an event we could not parse: {event_type}."
                             ),
                             timestamp: formatted_timestamp.clone(),
+                            arrow: None,
                         })
                     }
                     TimelineItemContent::FailedToParseState { event_type, .. } => {
@@ -1019,17 +1034,20 @@ impl TimelineModel {
                                 "{sender_name} sent a state event we could not parse: {event_type}."
                             ),
                             timestamp: formatted_timestamp.clone(),
+                            arrow: None,
                         })
                     }
                     TimelineItemContent::CallInvite => Some(RenderedTimelineItem::System {
                         id,
                         content: "Call activity".to_string(),
                         timestamp: formatted_timestamp.clone(),
+                        arrow: None,
                     }),
                     TimelineItemContent::RtcNotification => Some(RenderedTimelineItem::System {
                         id,
                         content: "Call activity".to_string(),
                         timestamp: formatted_timestamp.clone(),
+                        arrow: None,
                     }),
                     TimelineItemContent::MsgLike(msglike) => match &msglike.kind {
                         MsgLikeKind::Poll(poll) => Some(RenderedTimelineItem::Message {
@@ -1054,6 +1072,7 @@ impl TimelineModel {
                             id,
                             content: format!("{sender_name} removed a message."),
                             timestamp: formatted_timestamp.clone(),
+                            arrow: None,
                         }),
                         MsgLikeKind::Other(other) => Some(RenderedTimelineItem::System {
                             id,
@@ -1062,6 +1081,7 @@ impl TimelineModel {
                                 other.event_type()
                             ),
                             timestamp: formatted_timestamp.clone(),
+                            arrow: None,
                         }),
                         MsgLikeKind::Message(_)
                         | MsgLikeKind::Sticker(_)
@@ -1076,6 +1096,7 @@ impl TimelineModel {
                         id,
                         content,
                         timestamp,
+                        ..
                     } if content == "Call activity"
                         || content.contains("started a call")
                         || content.contains("call notification") =>
@@ -1083,23 +1104,7 @@ impl TimelineModel {
                         Some(PendingCallEntry {
                             id: id.clone(),
                             sender_name: sender_name.clone(),
-                            avatar_url: avatar_url.clone(),
                             content: content.clone(),
-                            timestamp: timestamp.clone(),
-                        })
-                    }
-                    RenderedTimelineItem::System {
-                        id,
-                        content,
-                        timestamp,
-                    } if content.contains("org.matrix.msc3401.call.member")
-                        || content.contains("call.member") =>
-                    {
-                        Some(PendingCallEntry {
-                            id: id.clone(),
-                            sender_name: sender_name.clone(),
-                            avatar_url: avatar_url.clone(),
-                            content: "Call member update".to_string(),
                             timestamp: timestamp.clone(),
                         })
                     }

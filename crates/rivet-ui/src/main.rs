@@ -19,6 +19,31 @@ use theme::onedark::OneDarkThemeExt;
 use crate::models::image_cache::ImageCache;
 use crate::models::timeline_model::TimelineModel;
 use crate::models::verification::VerificationEvent;
+
+use rust_embed::RustEmbed;
+use std::borrow::Cow;
+
+#[derive(RustEmbed)]
+#[folder = "../../assets/"]
+pub struct Assets;
+
+impl AssetSource for Assets {
+    fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        Ok(Self::get(path).map(|f| Cow::Owned(f.data.into_owned())))
+    }
+
+    fn list(&self, path: &str) -> gpui::Result<Vec<gpui::SharedString>> {
+        Ok(Self::iter()
+            .filter_map(|p| {
+                if p.starts_with(path) {
+                    Some(p.into())
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
+}
 use components::chat::ChatView;
 use gpui::AsyncApp;
 use matrix_sdk::ruma::RoomId;
@@ -40,7 +65,9 @@ fn main() {
 
     tracing::info!("Starting Rivet UI");
 
-    Application::new().run(|cx| {
+    Application::new()
+        .with_assets(Assets)
+        .run(|cx| {
         gpui_component::init(cx);
         models::appearance::init(cx);
         cx.set_global(ImageCache::new());

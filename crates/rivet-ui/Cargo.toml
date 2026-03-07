@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 gpui.workspace = true
 gpui-component.workspace = true
+rust-embed = { version = "8.7.2" }
 rivet-core = { path = "../rivet-core" }
 rivet-call = { path = "../rivet-call" }
 matrix-sdk.workspace = true
