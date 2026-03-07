@@ -7,6 +7,8 @@ use std::sync::Arc;
 #[derive(IntoElement)]
 pub struct RemoteImage {
     url: String,
+    source: Option<matrix_sdk::ruma::events::room::MediaSource>,
+    mimetype: Option<String>,
     size: Option<Pixels>,
     is_avatar: bool,
     is_full_rounded: bool,
@@ -17,11 +19,23 @@ impl RemoteImage {
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
+            source: None,
+            mimetype: None,
             size: None,
             is_avatar: false,
             is_full_rounded: false,
             object_fit: None,
         }
+    }
+
+    pub fn with_source(mut self, source: matrix_sdk::ruma::events::room::MediaSource) -> Self {
+        self.source = Some(source);
+        self
+    }
+
+    pub fn with_mimetype(mut self, mimetype: Option<String>) -> Self {
+        self.mimetype = mimetype;
+        self
     }
 
     pub fn size(mut self, size: Pixels) -> Self {
@@ -59,9 +73,15 @@ impl RenderOnce for RemoteImage {
             });
         }
 
-        let image = cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
-            |this, cx| this.get(self.url.clone(), cx),
-        );
+        let image = if let Some(source) = self.source {
+            cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
+                |this, cx| this.get_media_source(source, self.url.clone(), self.mimetype.clone(), cx),
+            )
+        } else {
+            cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
+                |this, cx| this.get(self.url.clone(), cx),
+            )
+        };
 
         let radius = if self.is_full_rounded {
             px(9999.0)

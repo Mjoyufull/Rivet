@@ -3,6 +3,7 @@ use image::ImageFormat;
 use image::imageops::FilterType;
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters, MediaThumbnailSettings};
 use matrix_sdk::reqwest;
+use matrix_sdk::ruma::events::room::MediaSource;
 use rivet_core::client::RivetClient;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -78,109 +79,13 @@ impl ImageCache {
                     };
 
                     let result = if let (Some(client), Some(mxc_str)) = (&client, mxc_uri) {
-                        Self::fetch_from_matrix_media(client, &mxc_str, is_avatar).await
+                        let source = MediaSource::Plain(matrix_sdk::ruma::OwnedMxcUri::from(mxc_str.clone()));
+                        Self::fetch_from_matrix_media(client, source, is_avatar, mxc_str).await
                     } else {
                         Self::fetch_with_reqwest(&url_clone).await
                     };
 
-                    match result {
-                        Ok((bytes, content_type)) => {
-                            let mut bytes = bytes.to_vec();
-                            let mut content_type = content_type;
-
-                            if is_avatar && let Some(processed) = Self::prepare_avatar_bytes(&bytes)
-                            {
-                                bytes = processed;
-                                content_type = Some("image/png".to_string());
-                            }
-
-                            // Detect format
-                            let format = if let Some(ref ct) = content_type {
-                                match ct.as_str() {
-                                    "image/png" => Some(gpui::ImageFormat::Png),
-                                    "image/jpeg" | "image/jpg" => Some(gpui::ImageFormat::Jpeg),
-                                    "image/gif" => Some(gpui::ImageFormat::Gif),
-                                    "image/webp" => Some(gpui::ImageFormat::Webp),
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            };
-
-                            // Fallback to magic numbers if header is missing or unknown
-                            let format = format.or_else(|| {
-                                if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-                                    Some(gpui::ImageFormat::Png)
-                                } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-                                    Some(gpui::ImageFormat::Jpeg)
-                                } else if bytes.starts_with(&[0x47, 0x49, 0x46, 0x38]) {
-                                    Some(gpui::ImageFormat::Gif)
-                                } else if bytes.starts_with(&[0x52, 0x49, 0x46, 0x46])
-                                    && bytes.get(8..12) == Some(b"WEBP")
-                                {
-                                    Some(gpui::ImageFormat::Webp)
-                                } else if let Ok(s) =
-                                    std::str::from_utf8(&bytes[..bytes.len().min(100)])
-                                {
-                                    if s.contains("<svg") {
-                                        Some(gpui::ImageFormat::Svg)
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            });
-
-                            if let Some(format) = format {
-                                let image = Arc::new(Image::from_bytes(format, bytes));
-                                let _ = async_cx.update(|cx: &mut App| {
-                                    cx.update_global::<Self, _>(|this, _cx| {
-                                        this.cache.insert(url_clone.clone(), image);
-                                        this.failed_until.remove(&url_clone);
-                                        this.pending.remove(&url_clone);
-                                    });
-                                });
-                            } else if let Some(png_bytes) = Self::decode_to_png_bytes(&bytes) {
-                                let image =
-                                    Arc::new(Image::from_bytes(gpui::ImageFormat::Png, png_bytes));
-                                let _ = async_cx.update(|cx: &mut App| {
-                                    cx.update_global::<Self, _>(|this, _cx| {
-                                        this.cache.insert(url_clone.clone(), image);
-                                        this.failed_until.remove(&url_clone);
-                                        this.pending.remove(&url_clone);
-                                    });
-                                });
-                            } else {
-                                tracing::error!(
-                                    "Unknown image format for {}. Content-Type: {:?}",
-                                    url_clone,
-                                    content_type
-                                );
-                                let _ = async_cx.update(|cx: &mut App| {
-                                    cx.update_global::<Self, _>(|this, _cx| {
-                                        this.failed_until.insert(
-                                            url_clone.clone(),
-                                            Instant::now() + Duration::from_secs(30),
-                                        );
-                                        this.pending.remove(&url_clone);
-                                    });
-                                });
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to fetch image {}: {:?}", url_clone, e);
-                            let _ = async_cx.update(|cx: &mut App| {
-                                cx.update_global::<Self, _>(|this, _cx| {
-                                    this.failed_until.insert(
-                                        url_clone.clone(),
-                                        Instant::now() + Duration::from_secs(10),
-                                    );
-                                    this.pending.remove(&url_clone);
-                                });
-                            });
-                        }
-                    }
+                    Self::process_image_result(result, url_clone, is_avatar, None, async_cx).await;
                 })
                 .detach();
         }
@@ -188,16 +93,166 @@ impl ImageCache {
         None
     }
 
+    pub fn get_media_source(
+        &mut self,
+        source: MediaSource,
+        url_key: String,
+        mimetype: Option<String>,
+        cx: &mut App,
+    ) -> Option<Arc<Image>> {
+        if let Some(image) = self.cache.get(&url_key) {
+            return Some(image.clone());
+        }
+        if let Some(until) = self.failed_until.get(&url_key) {
+            if Instant::now() < *until {
+                return None;
+            }
+            self.failed_until.remove(&url_key);
+        }
+
+        if !self.pending.contains(&url_key) {
+            self.pending.insert(url_key.clone());
+            let url_clone = url_key.clone();
+            let async_cx = cx.to_async();
+            let client = self.client.clone();
+            
+            // Spawn background task to fetch image
+            async_cx
+                .clone()
+                .spawn(move |_: &mut AsyncApp| async move {
+                    let result = if let Some(client) = &client {
+                        let mxc_str = match &source {
+                            MediaSource::Plain(mxc) => mxc.to_string(),
+                            MediaSource::Encrypted(enc) => enc.url.to_string(),
+                        };
+                        Self::fetch_from_matrix_media(client, source, false, mxc_str).await
+                    } else {
+                        Err(anyhow::anyhow!("Client not available"))
+                    };
+
+                    Self::process_image_result(result, url_clone, false, mimetype, async_cx).await;
+                })
+                .detach();
+        }
+
+        None
+    }
+
+    async fn process_image_result(
+        result: anyhow::Result<(Vec<u8>, Option<String>)>,
+        url_clone: String,
+        is_avatar: bool,
+        fallback_mimetype: Option<String>,
+        async_cx: AsyncApp,
+    ) {
+        match result {
+            Ok((bytes, content_type)) => {
+                let mut bytes = bytes.to_vec();
+                let mut content_type = content_type.or(fallback_mimetype);
+
+                if is_avatar && let Some(processed) = Self::prepare_avatar_bytes(&bytes) {
+                    bytes = processed;
+                    content_type = Some("image/png".to_string());
+                }
+
+                // Detect format
+                let format = if let Some(ref ct) = content_type {
+                    match ct.as_str() {
+                        "image/png" => Some(gpui::ImageFormat::Png),
+                        "image/jpeg" | "image/jpg" => Some(gpui::ImageFormat::Jpeg),
+                        "image/gif" => Some(gpui::ImageFormat::Gif),
+                        "image/webp" => Some(gpui::ImageFormat::Webp),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                // Fallback to magic numbers if header is missing or unknown
+                let format = format.or_else(|| {
+                    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+                        Some(gpui::ImageFormat::Png)
+                    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+                        Some(gpui::ImageFormat::Jpeg)
+                    } else if bytes.starts_with(&[0x47, 0x49, 0x46, 0x38]) {
+                        Some(gpui::ImageFormat::Gif)
+                    } else if bytes.starts_with(&[0x52, 0x49, 0x46, 0x46])
+                        && bytes.get(8..12) == Some(b"WEBP")
+                    {
+                        Some(gpui::ImageFormat::Webp)
+                    } else if let Ok(s) = std::str::from_utf8(&bytes[..bytes.len().min(100)]) {
+                        if s.contains("<svg") {
+                            Some(gpui::ImageFormat::Svg)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(format) = format {
+                    let image = Arc::new(Image::from_bytes(format, bytes));
+                    let _ = async_cx.update(|cx: &mut App| {
+                        cx.update_global::<Self, _>(|this, _cx| {
+                            this.cache.insert(url_clone.clone(), image);
+                            this.failed_until.remove(&url_clone);
+                            this.pending.remove(&url_clone);
+                        });
+                    });
+                } else if let Some(png_bytes) = Self::decode_to_png_bytes(&bytes) {
+                    let image = Arc::new(Image::from_bytes(gpui::ImageFormat::Png, png_bytes));
+                    let _ = async_cx.update(|cx: &mut App| {
+                        cx.update_global::<Self, _>(|this, _cx| {
+                            this.cache.insert(url_clone.clone(), image);
+                            this.failed_until.remove(&url_clone);
+                            this.pending.remove(&url_clone);
+                        });
+                    });
+                } else {
+                    tracing::error!(
+                        "Unknown image format for {}. Content-Type: {:?}",
+                        url_clone,
+                        content_type
+                    );
+                    let _ = async_cx.update(|cx: &mut App| {
+                        cx.update_global::<Self, _>(|this, _cx| {
+                            this.failed_until.insert(
+                                url_clone.clone(),
+                                Instant::now() + Duration::from_secs(30),
+                            );
+                            this.pending.remove(&url_clone);
+                        });
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to fetch image {}: {:?}", url_clone, e);
+                let _ = async_cx.update(|cx: &mut App| {
+                    cx.update_global::<Self, _>(|this, _cx| {
+                        this.failed_until.insert(
+                            url_clone.clone(),
+                            Instant::now() + Duration::from_secs(10),
+                        );
+                        this.pending.remove(&url_clone);
+                    });
+                });
+            }
+        }
+    }
+
     async fn fetch_from_matrix_media(
         client: &RivetClient,
-        mxc_str: &str,
+        source: MediaSource,
         is_avatar: bool,
+        mxc_str: String,
     ) -> anyhow::Result<(Vec<u8>, Option<String>)> {
-        let mxc = matrix_sdk::ruma::OwnedMxcUri::from(mxc_str.to_string());
+        // mxc_str comes from source
+        let _mxc = matrix_sdk::ruma::OwnedMxcUri::from(mxc_str.to_string());
 
         if is_avatar {
             let thumb = MediaRequestParameters {
-                source: matrix_sdk::ruma::events::room::MediaSource::Plain(mxc.clone()),
+                source: source.clone(),
                 format: MediaFormat::Thumbnail(MediaThumbnailSettings::with_method(
                     matrix_sdk::ruma::api::client::media::get_content_thumbnail::v3::Method::Crop,
                     matrix_sdk::ruma::uint!(64),
@@ -221,7 +276,7 @@ impl ImageCache {
         }
 
         let file = MediaRequestParameters {
-            source: matrix_sdk::ruma::events::room::MediaSource::Plain(mxc),
+            source,
             format: MediaFormat::File,
         };
 

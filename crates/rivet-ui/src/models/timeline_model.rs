@@ -69,8 +69,9 @@ pub enum RenderedTimelineItem {
         id: String,
         sender_id: String,
         sender_name: String,
-        url: String,
-        caption: Option<RenderedBody>,
+        source: matrix_sdk::ruma::events::room::MediaSource,
+        mimetype: Option<String>,
+        caption: Option<String>,
         timestamp: String,
         is_own: bool,
         is_grouped: bool,
@@ -173,10 +174,20 @@ fn rendered_body_from_text(body: &str, formatted: Option<&FormattedBody>) -> Ren
         }
     }
 
-    if should_use_rich_text(body) {
-        RenderedBody::Markdown(body.to_string())
+    lazy_static::lazy_static! {
+        static ref URL_REGEX: regex::Regex = regex::Regex::new(r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'.,<>?«»XY<>?«»“”‘’]))").unwrap();
+    }
+
+    let body_string = if URL_REGEX.is_match(body) {
+        URL_REGEX.replace_all(body, "[$0]($0)").to_string()
     } else {
-        RenderedBody::Plain(body.to_string())
+        body.to_string()
+    };
+
+    if should_use_rich_text(&body_string) {
+        RenderedBody::Markdown(body_string)
+    } else {
+        RenderedBody::Plain(body_string)
     }
 }
 
@@ -235,8 +246,8 @@ fn format_membership_change(
 
     let change = effective_membership_change(membership_change, sender_id);
     let arrow = match change {
-        MembershipChange::Joined | MembershipChange::Invited | MembershipChange::InvitationAccepted | MembershipChange::Knocked | MembershipChange::KnockAccepted => Some("->".to_string()),
-        MembershipChange::Left | MembershipChange::Banned | MembershipChange::KickedAndBanned | MembershipChange::Kicked | MembershipChange::InvitationRejected | MembershipChange::InvitationRevoked | MembershipChange::KnockRetracted | MembershipChange::KnockDenied => Some("-->".to_string()),
+        MembershipChange::Joined | MembershipChange::Invited | MembershipChange::InvitationAccepted | MembershipChange::Knocked | MembershipChange::KnockAccepted => Some("icons/log-in.svg".to_string()),
+        MembershipChange::Left | MembershipChange::Banned | MembershipChange::KickedAndBanned | MembershipChange::Kicked | MembershipChange::InvitationRejected | MembershipChange::InvitationRevoked | MembershipChange::KnockRetracted | MembershipChange::KnockDenied => Some("icons/log-out.svg".to_string()),
         _ => None,
     };
 
@@ -309,7 +320,7 @@ fn format_profile_change(profile_change: &MemberProfileChange, sender_name: &str
 fn format_other_state(other_state: &OtherState, sender_name: &str) -> Option<(String, Option<String>)> {
     let (content, arrow) = match other_state.content() {
         AnyOtherFullStateEventContent::RoomCreate(_) => {
-            (format!("{sender_name} created the room."), Some("->".to_string()))
+            (format!("{sender_name} created the room."), Some("icons/log-in.svg".to_string()))
         }
         AnyOtherFullStateEventContent::RoomEncryption(_) => {
             ("This room is encrypted from this point on.".to_string(), None)
@@ -372,7 +383,7 @@ fn format_other_state(other_state: &OtherState, sender_name: &str) -> Option<(St
     Some((content, arrow))
 }
 
-fn room_media_source_url(source: &matrix_sdk::ruma::events::room::MediaSource) -> String {
+pub fn room_media_source_url(source: &matrix_sdk::ruma::events::room::MediaSource) -> String {
     match source {
         matrix_sdk::ruma::events::room::MediaSource::Plain(url) => url.to_string(),
         matrix_sdk::ruma::events::room::MediaSource::Encrypted(file) => file.url.to_string(),
@@ -387,8 +398,12 @@ fn attachment_body(kind: &str, body: &str) -> RenderedBody {
     }
 }
 
-fn optional_caption(body: &str) -> Option<RenderedBody> {
-    (!body.trim().is_empty()).then(|| rendered_body_from_text(body, None))
+fn optional_caption(body: &str) -> Option<String> {
+    (!body.trim().is_empty()).then(|| body.to_string())
+}
+
+fn optional_caption_str(body: &str) -> Option<String> {
+    (!body.trim().is_empty()).then(|| body.to_string())
 }
 
 fn embedded_sender_name(
@@ -485,9 +500,14 @@ struct PendingCallEntry {
 fn flush_call_group(
     rendered: &mut Vector<RenderedTimelineItem>,
     pending_calls: &mut Vec<PendingCallEntry>,
+    pending_date_divider: &mut Option<String>,
 ) {
     if pending_calls.is_empty() {
         return;
+    }
+
+    if let Some(divider) = pending_date_divider.take() {
+        rendered.push_back(RenderedTimelineItem::Separator(divider));
     }
 
     let first = &pending_calls[0];
@@ -744,10 +764,11 @@ impl TimelineModel {
         let mut last_sender: Option<String> = None;
         let mut last_minute_bucket: Option<i64> = None;
         let mut pending_calls = Vec::new();
+        let mut pending_date_divider: Option<String> = None;
 
         for item in items.iter() {
             if let Some(virtual_item) = item.as_virtual() {
-                flush_call_group(&mut rendered, &mut pending_calls);
+                flush_call_group(&mut rendered, &mut pending_calls, &mut pending_date_divider);
                 last_sender = None;
                 last_minute_bucket = None;
 
@@ -757,8 +778,7 @@ impl TimelineModel {
                             .to_system_time()
                             .unwrap_or(std::time::SystemTime::now())
                             .into();
-                        rendered
-                            .push_back(RenderedTimelineItem::Separator(format_date_divider(dt)));
+                        pending_date_divider = Some(format_date_divider(dt));
                     }
                     VirtualTimelineItem::ReadMarker | VirtualTimelineItem::TimelineStart => {}
                 }
@@ -844,7 +864,8 @@ impl TimelineModel {
                         id,
                         sender_id: sender_id.clone(),
                         sender_name: sender_name.clone(),
-                        url: room_media_source_url(&image.source),
+                        source: image.source.clone(),
+                        mimetype: image.info.as_ref().and_then(|i| i.mimetype.clone()),
                         caption: optional_caption(&image.body),
                         timestamp: formatted_timestamp.clone(),
                         is_own: event.is_own(),
@@ -948,8 +969,9 @@ impl TimelineModel {
                         id,
                         sender_id: sender_id.clone(),
                         sender_name: sender_name.clone(),
-                        url: url.to_string(),
-                        caption: optional_caption(&sticker.content().body),
+                        source: matrix_sdk::ruma::events::room::MediaSource::Plain(url.clone()),
+                        mimetype: None, // Stickers usually don't have separate mimetype in source
+                        caption: optional_caption_str(&sticker.content().body),
                         timestamp: formatted_timestamp.clone(),
                         is_own: event.is_own(),
                         is_grouped,
@@ -1041,13 +1063,13 @@ impl TimelineModel {
                         id,
                         content: "Call activity".to_string(),
                         timestamp: formatted_timestamp.clone(),
-                        arrow: None,
+                        arrow: Some("icons/phone-call.svg".to_string()),
                     }),
                     TimelineItemContent::RtcNotification => Some(RenderedTimelineItem::System {
                         id,
                         content: "Call activity".to_string(),
                         timestamp: formatted_timestamp.clone(),
-                        arrow: None,
+                        arrow: Some("icons/phone-call.svg".to_string()),
                     }),
                     TimelineItemContent::MsgLike(msglike) => match &msglike.kind {
                         MsgLikeKind::Poll(poll) => Some(RenderedTimelineItem::Message {
@@ -1118,7 +1140,7 @@ impl TimelineModel {
                     continue;
                 }
 
-                flush_call_group(&mut rendered, &mut pending_calls);
+                flush_call_group(&mut rendered, &mut pending_calls, &mut pending_date_divider);
 
                 let is_chat_item = matches!(
                     rendered_item,
@@ -1137,7 +1159,7 @@ impl TimelineModel {
             }
         }
 
-        flush_call_group(&mut rendered, &mut pending_calls);
+        flush_call_group(&mut rendered, &mut pending_calls, &mut pending_date_divider);
 
         tracing::info!("timeline: produced {} rendered items", rendered.len());
         rendered

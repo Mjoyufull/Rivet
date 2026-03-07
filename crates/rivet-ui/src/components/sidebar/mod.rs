@@ -127,14 +127,14 @@ impl Sidebar {
                     })
                     .tooltip(|window, cx| Tooltip::new("Home").build(window, cx))
                     .child(
-                        div()
+                        svg()
+                            .path("brand/icon.svg")
+                            .size(rems(2.0))
                             .text_color(if is_home_active {
                                 theme.sidebar_background
                             } else {
                                 theme.text
-                            })
-                            .font_weight(FontWeight::BOLD)
-                            .child("R"),
+                            }),
                     )
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();

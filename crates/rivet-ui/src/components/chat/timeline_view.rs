@@ -10,6 +10,7 @@ use gpui::*;
 use gpui_component::StyledExt;
 use gpui_component::clipboard::Clipboard;
 use gpui_component::scroll::Scrollbar;
+use gpui_component::Sizable;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -581,15 +582,17 @@ fn render_body(
     theme: &OneDarkTheme,
 ) -> AnyElement {
     match body {
-        RenderedBody::Plain(text) => div()
-            .text_sm()
-            .text_color(if is_notice {
-                theme.text_muted
-            } else {
-                theme.text
-            })
-            .child(text.clone())
-            .into_any_element(),
+        RenderedBody::Plain(text) => {
+            div()
+                .text_sm()
+                .text_color(if is_notice {
+                    theme.text_muted
+                } else {
+                    theme.text
+                })
+                .child(text.clone())
+                .into_any_element()
+        }
         RenderedBody::Markdown(text) => {
             render_rich_body(item_id, parse_body_blocks(text), is_notice, theme)
         }
@@ -750,13 +753,17 @@ fn render_message_stack(
 
 fn render_image_stack(
     item_id: &str,
-    url: &str,
+    source: &matrix_sdk::ruma::events::room::MediaSource,
+    mimetype: Option<&String>,
     caption: Option<&RenderedBody>,
     reply_to: Option<&RenderedReplyPreview>,
     reply_interaction: Option<ReplyPreviewInteraction>,
     edited: bool,
     theme: &OneDarkTheme,
 ) -> AnyElement {
+    let mut image = crate::components::remote_image::RemoteImage::new(crate::models::timeline_model::room_media_source_url(source))
+        .with_source(source.clone())
+        .with_mimetype(mimetype.cloned());
     div()
         .flex_col()
         .gap_2()
@@ -776,7 +783,7 @@ fn render_image_stack(
                 .max_w(rems(28.0))
                 .max_h(rems(20.0))
                 .child(
-                    crate::components::remote_image::RemoteImage::new(url.to_string())
+                    image
                         .object_fit(ObjectFit::ScaleDown)
                         .into_any_element(),
                 ),
@@ -849,8 +856,9 @@ fn render_bubble_image(
     row_group_id: &SharedString,
     sender_id: &str,
     sender_name: &str,
-    url: &str,
-    caption: Option<&RenderedBody>,
+    source: &matrix_sdk::ruma::events::room::MediaSource,
+    mimetype: Option<&String>,
+    caption: Option<&String>,
     reply_to: Option<&RenderedReplyPreview>,
     reply_interaction: Option<ReplyPreviewInteraction>,
     timestamp: &str,
@@ -889,8 +897,9 @@ fn render_bubble_image(
                 .border_color(theme.border)
                 .child(render_image_stack(
                     item_id,
-                    url,
-                    caption,
+                    source,
+                    mimetype,
+                    caption.map(|c| RenderedBody::Plain(c.to_string())).as_ref(),
                     reply_to,
                     reply_interaction,
                     edited,
@@ -965,8 +974,9 @@ fn render_modern_image(
     row_group_id: &SharedString,
     sender_id: &str,
     sender_name: &str,
-    url: &str,
-    caption: Option<&RenderedBody>,
+    source: &matrix_sdk::ruma::events::room::MediaSource,
+    mimetype: Option<&String>,
+    caption: Option<&String>,
     reply_to: Option<&RenderedReplyPreview>,
     reply_interaction: Option<ReplyPreviewInteraction>,
     timestamp: &str,
@@ -1008,8 +1018,9 @@ fn render_modern_image(
                         })
                         .child(render_image_stack(
                             item_id,
-                            url,
-                            caption,
+                            source,
+                            mimetype,
+                            caption.map(|c| RenderedBody::Plain(c.to_string())).as_ref(),
                             reply_to,
                             reply_interaction,
                             edited,
@@ -1020,15 +1031,24 @@ fn render_modern_image(
         .into_any_element()
 }
 
-fn render_system_row(content: &str, timestamp: &str, arrow: Option<&str>, theme: &OneDarkTheme) -> AnyElement {
+fn render_system_row(content: &str, timestamp: &str, icon_path: Option<&str>, theme: &OneDarkTheme) -> AnyElement {
     let mut row = div()
         .flex()
         .items_start()
         .gap_3()
         .text_xs();
         
-    if let Some(arrow_str) = arrow {
-        row = row.child(div().text_color(theme.text_muted).child(arrow_str.to_string()));
+    if let Some(path) = icon_path {
+        row = row.child(
+            div()
+                .flex_none()
+                .child(
+                    gpui_component::Icon::empty()
+                        .path(path.to_string())
+                        .with_size(gpui_component::Size::Small)
+                        .text_color(theme.accent)
+                )
+        );
     }
 
     row = row
@@ -1036,7 +1056,7 @@ fn render_system_row(content: &str, timestamp: &str, arrow: Option<&str>, theme:
             div()
                 .flex_1()
                 .text_color(theme.text_muted)
-                .child(content.to_string()),
+                .child(render_body("system", &RenderedBody::Plain(content.to_string()), true, theme)),
         )
         .child(
             div()
@@ -1387,7 +1407,8 @@ impl Render for TimelineView {
                     id,
                     sender_id,
                     sender_name,
-                    url,
+                    source,
+                    mimetype,
                     caption,
                     timestamp,
                     is_own,
@@ -1396,47 +1417,53 @@ impl Render for TimelineView {
                     edited,
                     reply_to,
                 } => match chat_style {
-                    ChatStyle::Bubble => render_bubble_image(
-                        id,
-                        &row_group_id,
-                        sender_id,
-                        sender_name,
-                        url,
-                        caption.as_ref(),
-                        reply_to.as_ref(),
-                        reply_to.as_ref().map(|reply| ReplyPreviewInteraction {
-                            target_event_id: reply.event_id.clone(),
-                            event_indices: event_indices.clone(),
-                            list_state: list_state_for_rows.clone(),
-                            view: view.clone(),
-                        }),
-                        timestamp,
-                        *is_own,
-                        *is_grouped,
-                        *edited,
-                        &theme,
-                    ),
-                    ChatStyle::Modern => render_modern_image(
-                        id,
-                        &row_group_id,
-                        sender_id,
-                        sender_name,
-                        url,
-                        caption.as_ref(),
-                        reply_to.as_ref(),
-                        reply_to.as_ref().map(|reply| ReplyPreviewInteraction {
-                            target_event_id: reply.event_id.clone(),
-                            event_indices: event_indices.clone(),
-                            list_state: list_state_for_rows.clone(),
-                            view: view.clone(),
-                        }),
-                        timestamp,
-                        *is_grouped,
-                        avatar_url.as_ref(),
-                        *edited,
-                        &theme,
-                        cx,
-                    ),
+                    ChatStyle::Bubble => {
+                        render_bubble_image(
+                            id,
+                            &row_group_id,
+                            sender_id,
+                            sender_name,
+                            source,
+                            mimetype.as_ref(),
+                            caption.as_ref(),
+                            reply_to.as_ref(),
+                            reply_to.as_ref().map(|reply| ReplyPreviewInteraction {
+                                target_event_id: reply.event_id.clone(),
+                                event_indices: event_indices.clone(),
+                                list_state: list_state_for_rows.clone(),
+                                view: view.clone(),
+                            }),
+                            timestamp,
+                            *is_own,
+                            *is_grouped,
+                            *edited,
+                            &theme,
+                        )
+                    }
+                    ChatStyle::Modern => {
+                        render_modern_image(
+                            id,
+                            &row_group_id,
+                            sender_id,
+                            sender_name,
+                            source,
+                            mimetype.as_ref(),
+                            caption.as_ref(),
+                            reply_to.as_ref(),
+                            reply_to.as_ref().map(|reply| ReplyPreviewInteraction {
+                                target_event_id: reply.event_id.clone(),
+                                event_indices: event_indices.clone(),
+                                list_state: list_state_for_rows.clone(),
+                                view: view.clone(),
+                            }),
+                            timestamp,
+                            *is_grouped,
+                            avatar_url.as_ref(),
+                            *edited,
+                            &theme,
+                            cx,
+                        )
+                    }
                 },
                 RenderedTimelineItem::System {
                     content, timestamp, arrow, ..

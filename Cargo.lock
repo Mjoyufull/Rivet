@@ -6620,6 +6620,7 @@ dependencies = [
  "matrix-sdk",
  "matrix-sdk-ui",
  "open",
+ "regex",
  "rivet-call",
  "rivet-core",
  "rust-embed",
