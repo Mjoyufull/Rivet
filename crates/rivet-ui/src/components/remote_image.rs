@@ -11,7 +11,6 @@ pub struct RemoteImage {
     mimetype: Option<String>,
     size: Option<Pixels>,
     is_avatar: bool,
-    is_full_rounded: bool,
     object_fit: Option<ObjectFit>,
 }
 
@@ -23,7 +22,6 @@ impl RemoteImage {
             mimetype: None,
             size: None,
             is_avatar: false,
-            is_full_rounded: false,
             object_fit: None,
         }
     }
@@ -57,11 +55,6 @@ impl RemoteImage {
         }
         self
     }
-
-    pub fn full_rounded(mut self) -> Self {
-        self.is_full_rounded = true;
-        self
-    }
 }
 
 impl RenderOnce for RemoteImage {
@@ -75,7 +68,9 @@ impl RenderOnce for RemoteImage {
 
         let image = if let Some(source) = self.source {
             cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
-                |this, cx| this.get_media_source(source, self.url.clone(), self.mimetype.clone(), cx),
+                |this, cx| {
+                    this.get_media_source(source, self.url.clone(), self.mimetype.clone(), cx)
+                },
             )
         } else {
             cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
@@ -83,9 +78,7 @@ impl RenderOnce for RemoteImage {
             )
         };
 
-        let radius = if self.is_full_rounded {
-            px(9999.0)
-        } else if let Some(size) = self.size {
+        let radius = if let Some(size) = self.size {
             avatar_radius_for(size, cx)
         } else {
             get_radius(cx)

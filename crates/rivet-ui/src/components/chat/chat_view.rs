@@ -1,8 +1,8 @@
-use super::{MessageInput, TimelineView};
+use super::MessageInput;
 use crate::models::appearance::avatar_radius_for;
-use crate::models::rooms_model::RoomListModel;
-use crate::models::timeline_model::TimelineModel;
+use crate::rooms::RoomListModel;
 use crate::theme::onedark::OneDarkThemeExt;
+use crate::timeline::{TimelineModel, TimelineView};
 use gpui::*;
 use gpui_component::StyledExt;
 

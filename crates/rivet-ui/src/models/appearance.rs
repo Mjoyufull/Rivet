@@ -66,11 +66,3 @@ pub fn set_radius(radius: Pixels, cx: &mut App) {
     persist_radius(radius);
     cx.refresh_windows();
 }
-
-pub fn update_radius(f: impl FnOnce(Pixels) -> Pixels, cx: &mut App) {
-    let settings = cx.global_mut::<AppearanceSettings>();
-    let new_radius = px(f32::from(f(settings.avatar_radius)).clamp(0.0, 22.0));
-    settings.avatar_radius = new_radius;
-    persist_radius(new_radius);
-    cx.refresh_windows();
-}

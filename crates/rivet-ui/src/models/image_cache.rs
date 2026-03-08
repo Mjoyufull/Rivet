@@ -79,7 +79,9 @@ impl ImageCache {
                     };
 
                     let result = if let (Some(client), Some(mxc_str)) = (&client, mxc_uri) {
-                        let source = MediaSource::Plain(matrix_sdk::ruma::OwnedMxcUri::from(mxc_str.clone()));
+                        let source = MediaSource::Plain(matrix_sdk::ruma::OwnedMxcUri::from(
+                            mxc_str.clone(),
+                        ));
                         Self::fetch_from_matrix_media(client, source, is_avatar, mxc_str).await
                     } else {
                         Self::fetch_with_reqwest(&url_clone).await
@@ -115,7 +117,7 @@ impl ImageCache {
             let url_clone = url_key.clone();
             let async_cx = cx.to_async();
             let client = self.client.clone();
-            
+
             // Spawn background task to fetch image
             async_cx
                 .clone()
@@ -230,10 +232,8 @@ impl ImageCache {
                 tracing::error!("Failed to fetch image {}: {:?}", url_clone, e);
                 let _ = async_cx.update(|cx: &mut App| {
                     cx.update_global::<Self, _>(|this, _cx| {
-                        this.failed_until.insert(
-                            url_clone.clone(),
-                            Instant::now() + Duration::from_secs(10),
-                        );
+                        this.failed_until
+                            .insert(url_clone.clone(), Instant::now() + Duration::from_secs(10));
                         this.pending.remove(&url_clone);
                     });
                 });

@@ -1,7 +1,7 @@
 use gpui::*;
 // use gpui::prelude::*;
-use crate::models::timeline_model::TimelineModel;
 use crate::theme::onedark::OneDarkThemeExt;
+use crate::timeline::TimelineModel;
 use gpui_component::input::{Input, InputEvent, InputState};
 
 pub struct MessageInput {
