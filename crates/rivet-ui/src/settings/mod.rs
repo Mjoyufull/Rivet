@@ -5,7 +5,9 @@ mod general;
 mod overlay;
 mod tabs;
 
-use crate::models::appearance::{get_radius, set_radius};
+use crate::models::appearance::{
+    get_element_radius, get_image_radius, set_element_radius, set_image_radius,
+};
 use crate::timeline::ChatStyle;
 use gpui::*;
 use gpui_component::input::InputState;
@@ -20,8 +22,10 @@ pub struct SettingsView {
     show_rooms_in_home: bool,
     session_verified: bool,
     chat_style: ChatStyle,
-    avatar_radius: Pixels,
-    avatar_radius_slider: Entity<SliderState>,
+    image_radius: Pixels,
+    image_radius_slider: Entity<SliderState>,
+    element_radius: Pixels,
+    element_radius_slider: Entity<SliderState>,
     recovery_input: Entity<InputState>,
     recovery_status: Option<Result<(), String>>,
 }
@@ -36,27 +40,49 @@ impl Focusable for SettingsView {
 
 impl SettingsView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let avatar_radius = px(f32::from(get_radius(cx)).clamp(0.0, 22.0));
+        let image_radius = px(f32::from(get_image_radius(cx)).clamp(0.0, 22.0));
+        let element_radius = px(f32::from(get_element_radius(cx)).clamp(0.0, 24.0));
         let recovery_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Enter recovery key or passphrase...")
         });
-        let avatar_radius_slider = cx.new(|_| {
+        let image_radius_slider = cx.new(|_| {
             SliderState::new()
                 .min(0.0)
                 .max(22.0)
                 .step(1.0)
-                .default_value(f32::from(avatar_radius))
+                .default_value(f32::from(image_radius))
+        });
+        let element_radius_slider = cx.new(|_| {
+            SliderState::new()
+                .min(0.0)
+                .max(24.0)
+                .step(1.0)
+                .default_value(f32::from(element_radius))
         });
 
         cx.subscribe(
-            &avatar_radius_slider,
+            &image_radius_slider,
             |this: &mut Self, _, event: &SliderEvent, cx| match event {
                 SliderEvent::Change(value) => {
                     let value = match value {
                         SliderValue::Single(v) => *v,
                         SliderValue::Range(_, end) => *end,
                     };
-                    this.set_avatar_radius(px(value), cx);
+                    this.set_image_radius(px(value), cx);
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &element_radius_slider,
+            |this: &mut Self, _, event: &SliderEvent, cx| match event {
+                SliderEvent::Change(value) => {
+                    let value = match value {
+                        SliderValue::Single(v) => *v,
+                        SliderValue::Range(_, end) => *end,
+                    };
+                    this.set_element_radius(px(value), cx);
                 }
             },
         )
@@ -68,8 +94,10 @@ impl SettingsView {
             show_rooms_in_home: false,
             session_verified: false,
             chat_style: ChatStyle::default(),
-            avatar_radius,
-            avatar_radius_slider,
+            image_radius,
+            image_radius_slider,
+            element_radius,
+            element_radius_slider,
             recovery_input,
             recovery_status: None,
         }
@@ -94,10 +122,17 @@ impl SettingsView {
         cx.notify();
     }
 
-    pub fn set_avatar_radius(&mut self, radius: Pixels, cx: &mut Context<Self>) {
+    pub fn set_image_radius(&mut self, radius: Pixels, cx: &mut Context<Self>) {
         let radius = px(f32::from(radius).clamp(0.0, 22.0));
-        self.avatar_radius = radius;
-        set_radius(radius, cx);
+        self.image_radius = radius;
+        set_image_radius(radius, cx);
+        cx.notify();
+    }
+
+    pub fn set_element_radius(&mut self, radius: Pixels, cx: &mut Context<Self>) {
+        let radius = px(f32::from(radius).clamp(0.0, 24.0));
+        self.element_radius = radius;
+        set_element_radius(radius, cx);
         cx.notify();
     }
 

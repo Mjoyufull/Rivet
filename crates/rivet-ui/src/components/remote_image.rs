@@ -1,4 +1,4 @@
-use crate::models::appearance::{avatar_radius_for, get_radius};
+use crate::models::appearance::{avatar_radius_for, get_image_radius};
 use gpui::ObjectFit;
 use gpui::*;
 use gpui_component::StyledExt;
@@ -81,7 +81,7 @@ impl RenderOnce for RemoteImage {
         let radius = if let Some(size) = self.size {
             avatar_radius_for(size, cx)
         } else {
-            get_radius(cx)
+            get_image_radius(cx)
         };
         let corner_radii = Corners::all(radius);
 

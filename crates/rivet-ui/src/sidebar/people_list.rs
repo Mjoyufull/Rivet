@@ -1,4 +1,4 @@
-use crate::models::appearance::avatar_radius_for;
+use crate::models::appearance::{avatar_radius_for, element_radius_small};
 use crate::rooms::RoomListModel;
 use crate::theme::onedark::OneDarkThemeExt;
 use gpui::*;
@@ -26,6 +26,7 @@ impl RenderOnce for PeopleList {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.onedark_theme();
         let avatar_radius = avatar_radius_for(px(40.0), cx);
+        let item_radius = element_radius_small(cx);
 
         let people_content = if let Some(model_entity) = &self.model {
             let model_read = model_entity.read(cx);
@@ -106,7 +107,7 @@ impl RenderOnce for PeopleList {
                         .group("person-item")
                         .px_2()
                         .py_1()
-                        .rounded_md()
+                        .corner_radii(Corners::all(item_radius))
                         .flex()
                         .items_center()
                         .gap_3()

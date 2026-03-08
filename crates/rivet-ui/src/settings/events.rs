@@ -4,6 +4,7 @@ use crate::timeline::ChatStyle;
 pub enum SettingsEvent {
     Close,
     Logout,
+    DeleteAllData,
     VerifySession,
     RecoverWithKey(String),
     SetChatStyle(ChatStyle),

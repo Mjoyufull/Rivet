@@ -12,6 +12,22 @@ use rivet_core::client::RivetClient;
 use std::sync::Arc;
 
 impl AppView {
+    pub(super) fn reset_logged_out_state(&mut self, cx: &mut Context<Self>) {
+        self.is_logged_in = false;
+        self.room_list_model = None;
+        self.active_timeline_model = None;
+        self.active_chat_view = None;
+        self.verification_model = None;
+        self.active_room_id = None;
+        self.client = None;
+        self.is_settings_open = false;
+        self.session_verified = false;
+        self.is_recovering = false;
+        self.recovery_status = None;
+        self.sync_status = "Idle".to_string();
+        self.sidebar = cx.new(|_| Sidebar::new(None, None));
+    }
+
     pub(crate) fn login(&mut self, client: RivetClient, cx: &mut Context<Self>) {
         tracing::info!("Initializing UI for logged in user");
         self.client = Some(client.clone());
@@ -292,16 +308,7 @@ impl AppView {
             });
         }
 
-        self.is_logged_in = false;
-        self.room_list_model = None;
-        self.active_timeline_model = None;
-        self.active_chat_view = None;
-        self.verification_model = None;
-        self.active_room_id = None;
-        self.client = None;
-        self.is_settings_open = false;
-        self.session_verified = false;
-        self.sidebar = cx.new(|_| Sidebar::new(None, None));
+        self.reset_logged_out_state(cx);
         cx.notify();
     }
 }

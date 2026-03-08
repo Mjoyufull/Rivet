@@ -8,12 +8,16 @@ pub struct LocalServerHandle {
     pub redirect_url: Url,
     /// Receiver for the callback URL with login token.
     rx: oneshot::Receiver<Url>,
+    /// Sender used to cancel the listener when the login flow is aborted.
+    _shutdown_tx: oneshot::Sender<()>,
 }
 
 impl LocalServerHandle {
     /// Wait for the SSO callback to complete.
-    pub async fn wait_for_callback(self) -> Result<Url, LocalServerError> {
-        self.rx.await.map_err(|_| LocalServerError::Cancelled)
+    pub async fn wait_for_callback(&mut self) -> Result<Url, LocalServerError> {
+        (&mut self.rx)
+            .await
+            .map_err(|_| LocalServerError::Cancelled)
     }
 }
 
@@ -50,12 +54,17 @@ pub fn spawn_local_server() -> Result<LocalServerHandle, LocalServerError> {
     let redirect_url = Url::parse(&format!("http://127.0.0.1:{}/", port)).expect("valid URL");
 
     let (tx, rx) = oneshot::channel();
-    tokio::spawn(run_server(port, tx));
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    tokio::spawn(run_server(port, tx, shutdown_rx));
 
-    Ok(LocalServerHandle { redirect_url, rx })
+    Ok(LocalServerHandle {
+        redirect_url,
+        rx,
+        _shutdown_tx: shutdown_tx,
+    })
 }
 
-async fn run_server(port: u16, tx: oneshot::Sender<Url>) {
+async fn run_server(port: u16, tx: oneshot::Sender<Url>, shutdown_rx: oneshot::Receiver<()>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -69,7 +78,16 @@ async fn run_server(port: u16, tx: oneshot::Sender<Url>) {
 
     tracing::info!("SSO callback server listening on port {}", port);
 
-    if let Ok((mut socket, addr)) = listener.accept().await {
+    let mut shutdown_rx = shutdown_rx;
+    let accept_result = tokio::select! {
+        result = listener.accept() => Some(result),
+        _ = &mut shutdown_rx => {
+            tracing::info!("SSO callback server cancelled on port {}", port);
+            None
+        }
+    };
+
+    if let Some(Ok((mut socket, addr))) = accept_result {
         tracing::info!("SSO callback received from {}", addr);
         let mut buf = vec![0u8; 8192];
         if let Ok(n) = socket.read(&mut buf).await {

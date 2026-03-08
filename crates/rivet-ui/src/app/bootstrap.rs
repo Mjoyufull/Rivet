@@ -31,6 +31,7 @@ pub(crate) fn build_root(window: &mut Window, cx: &mut App) -> Entity<Root> {
             |this: &mut AppView, _, event: &SettingsEvent, cx| match event {
                 SettingsEvent::Close => this.close_settings(cx),
                 SettingsEvent::Logout => this.logout(cx),
+                SettingsEvent::DeleteAllData => this.delete_all_local_data(cx),
                 SettingsEvent::VerifySession => this.start_self_verification(cx),
                 SettingsEvent::RecoverWithKey(key) => this.recover_with_key(key.clone(), cx),
                 SettingsEvent::SetChatStyle(style) => {

@@ -1,7 +1,9 @@
 use gpui::*;
 // use gpui::prelude::*;
+use crate::models::appearance::element_radius_small;
 use crate::theme::onedark::OneDarkThemeExt;
 use crate::timeline::TimelineModel;
+use gpui_component::StyledExt;
 use gpui_component::input::{Input, InputEvent, InputState};
 
 pub struct MessageInput {
@@ -45,6 +47,7 @@ impl Render for MessageInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.onedark_theme();
         let view = cx.entity().clone();
+        let button_radius = element_radius_small(cx);
 
         div()
             .flex()
@@ -59,12 +62,12 @@ impl Render for MessageInput {
                 div()
                     .px_4()
                     .py_2()
-                    .rounded_md()
+                    .corner_radii(Corners::all(button_radius))
                     .bg(theme.accent)
                     .text_color(theme.sidebar_background)
                     .font_weight(FontWeight::BOLD)
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme.accent.opacity(0.8)))
+                    .hover(|s: StyleRefinement| s.bg(theme.accent.opacity(0.8)))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         view.update(cx, |this, cx| this.handle_submit(window, cx));
                     })

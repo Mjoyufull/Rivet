@@ -1,6 +1,7 @@
 use super::AppView;
 use gpui::AsyncApp;
 use gpui::*;
+use rivet_core::client::RivetClient;
 
 impl AppView {
     pub(crate) fn open_settings(&mut self, cx: &mut Context<Self>) {
@@ -39,5 +40,33 @@ impl AppView {
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.is_settings_open = false;
         cx.notify();
+    }
+
+    pub(crate) fn delete_all_local_data(&mut self, cx: &mut Context<Self>) {
+        tracing::warn!("Deleting all local Rivet data stores");
+
+        let client = self.client.take();
+        self.reset_logged_out_state(cx);
+        cx.notify();
+
+        let async_cx = cx.to_async();
+        async_cx
+            .clone()
+            .spawn(move |_: &mut AsyncApp| async move {
+                if let Some(client) = client {
+                    if let Err(error) = client.shutdown().await {
+                        tracing::error!(
+                            "Failed to stop active profile before data deletion: {:?}",
+                            error
+                        );
+                    }
+                    drop(client);
+                }
+
+                if let Err(error) = RivetClient::delete_all_local_data() {
+                    tracing::error!("Failed to delete local Rivet data: {:?}", error);
+                }
+            })
+            .detach();
     }
 }
