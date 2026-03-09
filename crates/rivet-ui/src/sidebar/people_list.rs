@@ -1,3 +1,4 @@
+use crate::components::remote_image::avatar_fallback_label;
 use crate::models::appearance::{avatar_radius_for, element_radius_small};
 use crate::rooms::RoomListModel;
 use crate::theme::onedark::OneDarkThemeExt;
@@ -60,6 +61,7 @@ impl RenderOnce for PeopleList {
                     };
 
                     let avatar = if let Some(url) = &room.avatar_url {
+                        let fallback = avatar_fallback_label(&room_name, &room.id);
                         div()
                             .size_10()
                             .corner_radii(Corners::all(avatar_radius))
@@ -67,7 +69,8 @@ impl RenderOnce for PeopleList {
                             .child(
                                 crate::components::remote_image::RemoteImage::new(url.clone())
                                     .size(px(40.0))
-                                    .avatar(),
+                                    .avatar()
+                                    .fallback_text(fallback),
                             )
                     } else {
                         div()

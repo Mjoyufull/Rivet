@@ -157,41 +157,7 @@ impl ImageCache {
                     content_type = Some("image/png".to_string());
                 }
 
-                // Detect format
-                let format = if let Some(ref ct) = content_type {
-                    match ct.as_str() {
-                        "image/png" => Some(gpui::ImageFormat::Png),
-                        "image/jpeg" | "image/jpg" => Some(gpui::ImageFormat::Jpeg),
-                        "image/gif" => Some(gpui::ImageFormat::Gif),
-                        "image/webp" => Some(gpui::ImageFormat::Webp),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-
-                // Fallback to magic numbers if header is missing or unknown
-                let format = format.or_else(|| {
-                    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-                        Some(gpui::ImageFormat::Png)
-                    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-                        Some(gpui::ImageFormat::Jpeg)
-                    } else if bytes.starts_with(&[0x47, 0x49, 0x46, 0x38]) {
-                        Some(gpui::ImageFormat::Gif)
-                    } else if bytes.starts_with(&[0x52, 0x49, 0x46, 0x46])
-                        && bytes.get(8..12) == Some(b"WEBP")
-                    {
-                        Some(gpui::ImageFormat::Webp)
-                    } else if let Ok(s) = std::str::from_utf8(&bytes[..bytes.len().min(100)]) {
-                        if s.contains("<svg") {
-                            Some(gpui::ImageFormat::Svg)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
+                let format = Self::detect_format(&bytes, content_type.as_deref());
 
                 if let Some(format) = format {
                     let image = Arc::new(Image::from_bytes(format, bytes));
@@ -201,6 +167,7 @@ impl ImageCache {
                             this.failed_until.remove(&url_clone);
                             this.pending.remove(&url_clone);
                         });
+                        cx.refresh_windows();
                     });
                 } else if let Some(png_bytes) = Self::decode_to_png_bytes(&bytes) {
                     let image = Arc::new(Image::from_bytes(gpui::ImageFormat::Png, png_bytes));
@@ -210,6 +177,7 @@ impl ImageCache {
                             this.failed_until.remove(&url_clone);
                             this.pending.remove(&url_clone);
                         });
+                        cx.refresh_windows();
                     });
                 } else {
                     tracing::error!(
@@ -225,6 +193,7 @@ impl ImageCache {
                             );
                             this.pending.remove(&url_clone);
                         });
+                        cx.refresh_windows();
                     });
                 }
             }
@@ -236,6 +205,7 @@ impl ImageCache {
                             .insert(url_clone.clone(), Instant::now() + Duration::from_secs(10));
                         this.pending.remove(&url_clone);
                     });
+                    cx.refresh_windows();
                 });
             }
         }
@@ -247,9 +217,6 @@ impl ImageCache {
         is_avatar: bool,
         mxc_str: String,
     ) -> anyhow::Result<(Vec<u8>, Option<String>)> {
-        // mxc_str comes from source
-        let _mxc = matrix_sdk::ruma::OwnedMxcUri::from(mxc_str.to_string());
-
         if is_avatar {
             let thumb = MediaRequestParameters {
                 source: source.clone(),
@@ -280,13 +247,31 @@ impl ImageCache {
             format: MediaFormat::File,
         };
 
-        client
+        let bytes = client
             .client()
             .media()
             .get_media_content(&file, true)
             .await
-            .map(|bytes| (bytes.to_vec(), None))
-            .map_err(|e| anyhow::anyhow!(e))
+            .map_err(|e| anyhow::anyhow!(e))?
+            .to_vec();
+
+        if Self::detect_format(&bytes, None).is_some() {
+            return Ok((bytes, None));
+        }
+
+        let direct_url = client.resolve_mxc(&mxc_str);
+        match Self::fetch_with_reqwest(&direct_url).await {
+            Ok((direct_bytes, direct_content_type))
+                if Self::detect_format(&direct_bytes, direct_content_type.as_deref()).is_some() =>
+            {
+                Ok((direct_bytes, direct_content_type))
+            }
+            Ok(_) => Ok((bytes, None)),
+            Err(err) => {
+                tracing::debug!("Direct media fetch fallback failed for {mxc_str}: {err:?}");
+                Ok((bytes, None))
+            }
+        }
     }
 
     async fn fetch_with_reqwest(url: &str) -> anyhow::Result<(Vec<u8>, Option<String>)> {
@@ -349,6 +334,39 @@ impl ImageCache {
         let mut cursor = Cursor::new(&mut encoded);
         output.write_to(&mut cursor, ImageFormat::Png).ok()?;
         Some(encoded)
+    }
+
+    fn detect_format(bytes: &[u8], content_type: Option<&str>) -> Option<gpui::ImageFormat> {
+        let from_content_type = content_type.and_then(gpui::ImageFormat::from_mime_type);
+        if from_content_type.is_some() {
+            return from_content_type;
+        }
+
+        if let Ok(format) = image::guess_format(bytes) {
+            let mapped = match format {
+                ImageFormat::Png => Some(gpui::ImageFormat::Png),
+                ImageFormat::Jpeg => Some(gpui::ImageFormat::Jpeg),
+                ImageFormat::Gif => Some(gpui::ImageFormat::Gif),
+                ImageFormat::WebP => Some(gpui::ImageFormat::Webp),
+                ImageFormat::Bmp => Some(gpui::ImageFormat::Bmp),
+                ImageFormat::Tiff => Some(gpui::ImageFormat::Tiff),
+                _ => None,
+            };
+
+            if mapped.is_some() {
+                return mapped;
+            }
+        }
+
+        let sniff_len = bytes.len().min(4096);
+        if let Ok(sample) = std::str::from_utf8(&bytes[..sniff_len]) {
+            let sample = sample.trim_start_matches('\u{feff}');
+            if sample.contains("<svg") {
+                return Some(gpui::ImageFormat::Svg);
+            }
+        }
+
+        None
     }
 
     fn decode_to_png_bytes(input: &[u8]) -> Option<Vec<u8>> {

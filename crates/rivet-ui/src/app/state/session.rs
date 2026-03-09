@@ -18,6 +18,7 @@ impl AppView {
         self.active_timeline_model = None;
         self.active_chat_view = None;
         self.verification_model = None;
+        self.verification_gate_active = false;
         self.active_room_id = None;
         self.client = None;
         self.is_settings_open = false;
@@ -32,18 +33,33 @@ impl AppView {
         tracing::info!("Initializing UI for logged in user");
         self.client = Some(client.clone());
         ImageCache::init(client.clone(), cx);
+        self.is_logged_in = true;
+        self.verification_gate_active = true;
+        self.sync_status = "Preparing secure session".to_string();
+        self.spawn_post_login_self_verification(client.clone(), cx);
+        self.install_verification_request_handler(client, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn finalize_post_login_setup(
+        &mut self,
+        client: RivetClient,
+        cx: &mut Context<Self>,
+    ) {
+        if self.room_list_model.is_some() {
+            self.verification_gate_active = false;
+            return;
+        }
 
         let room_list_model = RoomListModel::new(cx);
         RoomListModel::init(room_list_model.clone(), client.clone(), cx);
         self.room_list_model = Some(room_list_model.clone());
         self.observe_room_selection(&room_list_model, cx);
 
-        self.is_logged_in = true;
         self.install_sidebar(client.clone(), room_list_model, cx);
         self.spawn_sidebar_profile_refresh(client.clone(), cx);
-        self.spawn_sync_status_listener(client.clone(), cx);
-        self.spawn_post_login_self_verification(client.clone(), cx);
-        self.install_verification_request_handler(client, cx);
+        self.spawn_sync_status_listener(client, cx);
+        self.verification_gate_active = false;
         cx.notify();
     }
 
@@ -212,6 +228,9 @@ impl AppView {
                 let _ = async_cx.update(|cx| {
                     let _ = this_verify.update(cx, |view, cx| {
                         view.set_session_verified(is_verified, cx);
+                        if is_verified {
+                            view.finalize_post_login_setup(client.clone(), cx);
+                        }
                     });
                 });
 
@@ -234,13 +253,28 @@ impl AppView {
                                 }
                                 Err(e) => {
                                     tracing::warn!("Failed to request self-verification: {:?}", e);
+                                    let _ = async_cx.update(|cx| {
+                                        let _ = this_verify.update(cx, |view, cx| {
+                                            view.finalize_post_login_setup(client.clone(), cx);
+                                        });
+                                    });
                                 }
                             },
                             Ok(None) => {
                                 tracing::warn!("No user identity found for self-verification");
+                                let _ = async_cx.update(|cx| {
+                                    let _ = this_verify.update(cx, |view, cx| {
+                                        view.finalize_post_login_setup(client.clone(), cx);
+                                    });
+                                });
                             }
                             Err(e) => {
                                 tracing::warn!("Failed to get user identity: {:?}", e);
+                                let _ = async_cx.update(|cx| {
+                                    let _ = this_verify.update(cx, |view, cx| {
+                                        view.finalize_post_login_setup(client.clone(), cx);
+                                    });
+                                });
                             }
                         }
                     }

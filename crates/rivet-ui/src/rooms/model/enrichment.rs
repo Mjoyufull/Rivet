@@ -1,7 +1,7 @@
 use super::RoomInfo;
+use crate::rooms::resolve_direct_room_profile;
 use futures::StreamExt;
 use matrix_sdk::RoomDisplayName;
-use matrix_sdk::RoomMemberships;
 use matrix_sdk::RoomState;
 use matrix_sdk::deserialized_responses::SyncOrStrippedState;
 use matrix_sdk::room::ParentSpace;
@@ -34,28 +34,20 @@ pub(super) async fn process_room_items(items: Vec<RoomListItem>) -> Vec<RoomInfo
         let is_joined = room.state() == RoomState::Joined;
         let mut avatar_url = room.avatar_url().map(|u| u.to_string());
 
-        if is_direct && avatar_url.is_none() {
-            if let Ok(members) = room.members_no_sync(RoomMemberships::ACTIVE).await {
-                if let Some(other) = members
-                    .into_iter()
-                    .find(|m| m.user_id() != room.own_user_id())
-                {
-                    if avatar_url.is_none() {
-                        avatar_url = other.avatar_url().map(|u| u.to_string());
-                    }
+        if is_direct {
+            let needs_direct_profile = avatar_url.is_none()
+                || name.starts_with('@')
+                || name == room_id_str
+                || name.starts_with("Empty Room");
 
-                    if name.starts_with('@')
-                        || name == room_id_str
-                        || name.starts_with("Empty Room")
-                    {
-                        if let Some(display_name) = other.display_name() {
-                            if !display_name.trim().is_empty() {
-                                name = display_name.to_string();
-                            }
-                        } else {
-                            name = other.user_id().localpart().to_string();
-                        }
-                    }
+            if needs_direct_profile && let Some(profile) = resolve_direct_room_profile(&room).await
+            {
+                if avatar_url.is_none() {
+                    avatar_url = profile.avatar_url;
+                }
+
+                if name.starts_with('@') || name == room_id_str || name.starts_with("Empty Room") {
+                    name = profile.display_name;
                 }
             }
         }

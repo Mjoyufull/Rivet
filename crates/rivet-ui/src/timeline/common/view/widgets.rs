@@ -98,17 +98,21 @@ pub(crate) fn render_image_stack(
     item_id: &str,
     source: &matrix_sdk::ruma::events::room::MediaSource,
     mimetype: Option<&String>,
+    dimensions: Option<(u32, u32)>,
     caption: Option<&RenderedBody>,
     reply_to: Option<&RenderedReplyPreview>,
     reply_interaction: Option<ReplyPreviewInteraction>,
     edited: bool,
     theme: &OneDarkTheme,
 ) -> AnyElement {
+    let (frame_width, frame_height) = image_frame_size(dimensions);
     let image = crate::components::remote_image::RemoteImage::new(
         crate::timeline::common::model::room_media_source_url(source),
     )
     .with_source(source.clone())
-    .with_mimetype(mimetype.cloned());
+    .with_mimetype(mimetype.cloned())
+    .frame_size(frame_width, frame_height)
+    .object_fit(ObjectFit::Contain);
     div()
         .flex_col()
         .gap_2()
@@ -125,15 +129,45 @@ pub(crate) fn render_image_stack(
                 .overflow_hidden()
                 .border_1()
                 .border_color(theme.border)
-                .max_w(rems(28.0))
-                .max_h(rems(20.0))
-                .child(image.object_fit(ObjectFit::ScaleDown).into_any_element()),
+                .w(frame_width)
+                .h(frame_height)
+                .max_w(frame_width)
+                .max_h(frame_height)
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(theme.sidebar_background.opacity(0.55))
+                .child(image.into_any_element()),
         )
         .when_some(caption, |this, caption| {
             this.child(render_body(item_id, caption, false, theme))
         })
         .when(edited, |this| this.child(render_edited_indicator(theme)))
         .into_any_element()
+}
+
+fn image_frame_size(dimensions: Option<(u32, u32)>) -> (Pixels, Pixels) {
+    const REM_PX: f32 = 16.0;
+    const MAX_WIDTH: f32 = 28.0 * REM_PX;
+    const MAX_HEIGHT: f32 = 20.0 * REM_PX;
+    const MIN_WIDTH: f32 = 12.0 * REM_PX;
+    const MIN_HEIGHT: f32 = 8.0 * REM_PX;
+
+    if let Some((width, height)) = dimensions
+        && width > 0
+        && height > 0
+    {
+        let width = width as f32;
+        let height = height as f32;
+        let scale = (MAX_WIDTH / width).min(MAX_HEIGHT / height).min(1.0);
+
+        return (
+            px((width * scale).clamp(MIN_WIDTH, MAX_WIDTH)),
+            px((height * scale).clamp(MIN_HEIGHT, MAX_HEIGHT)),
+        );
+    }
+
+    (px(MAX_WIDTH), px(MAX_HEIGHT))
 }
 
 pub(crate) fn render_system_row(

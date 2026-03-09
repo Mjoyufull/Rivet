@@ -7,7 +7,7 @@ use matrix_sdk::encryption::verification::{SasVerification, VerificationRequest}
 #[derive(Debug, Clone)]
 pub enum VerificationEvent {
     /// Verification completed, cancelled, or dismissed — caller should clear the overlay.
-    Finished,
+    Finished { verified: bool },
 }
 
 /// Coordinates the Matrix SAS verification flow between the SDK and the UI.
@@ -290,9 +290,10 @@ impl VerificationModel {
 
     /// Dismiss the verification overlay (after Done or Cancelled).
     pub fn dismiss(&mut self, cx: &mut Context<Self>) {
+        let verified = self.state == VerificationState::Done;
         self.state = VerificationState::Dismissed;
         cx.notify();
-        cx.emit(VerificationEvent::Finished);
+        cx.emit(VerificationEvent::Finished { verified });
     }
 }
 

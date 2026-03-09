@@ -1,4 +1,4 @@
-use crate::components::remote_image::RemoteImage;
+use crate::components::remote_image::{RemoteImage, avatar_fallback_label};
 use crate::models::appearance::avatar_radius_for;
 use crate::theme::onedark::OneDarkThemeExt;
 use gpui::*;
@@ -58,9 +58,12 @@ impl RenderOnce for SidebarFooter {
                             .items_center()
                             .justify_center()
                             .child(if let Some(url) = self.avatar_url {
+                                let fallback =
+                                    avatar_fallback_label(&self.display_name, &self.user_id);
                                 RemoteImage::new(url)
                                     .size(px(40.0))
                                     .avatar()
+                                    .fallback_text(fallback)
                                     .into_any_element()
                             } else {
                                 div()

@@ -6,6 +6,14 @@ use gpui::*;
 use matrix_sdk_ui::eyeball_im::{Vector, VectorDiff};
 use rivet_core::client::RivetClient;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum RailSelection {
+    #[default]
+    Home,
+    Rooms,
+    Space(String),
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct RoomInfo {
     pub id: String,
@@ -27,7 +35,7 @@ pub struct RoomListModel {
     pub all_rooms: Vector<RoomInfo>,
     pub is_loading: bool,
     pub selected_room_id: Option<String>,
-    pub selected_space_id: Option<String>,
+    pub rail_selection: RailSelection,
     pub show_rooms_in_home: bool,
     _room_list_controller:
         Option<matrix_sdk_ui::room_list_service::RoomListDynamicEntriesController>,
@@ -44,7 +52,7 @@ impl RoomListModel {
             all_rooms: Vector::new(),
             is_loading: true,
             selected_room_id: None,
-            selected_space_id: None,
+            rail_selection: RailSelection::Home,
             show_rooms_in_home: false,
             _room_list_controller: None,
         })
@@ -57,9 +65,25 @@ impl RoomListModel {
         }
     }
 
-    pub fn select_space(&mut self, space_id: Option<String>, cx: &mut Context<Self>) {
-        if self.selected_space_id != space_id {
-            self.selected_space_id = space_id;
+    pub fn select_home(&mut self, cx: &mut Context<Self>) {
+        if self.rail_selection != RailSelection::Home {
+            self.rail_selection = RailSelection::Home;
+            self.recalculate_derived_lists();
+            cx.notify();
+        }
+    }
+
+    pub fn select_rooms(&mut self, cx: &mut Context<Self>) {
+        if self.rail_selection != RailSelection::Rooms {
+            self.rail_selection = RailSelection::Rooms;
+            self.recalculate_derived_lists();
+            cx.notify();
+        }
+    }
+
+    pub fn select_space(&mut self, space_id: String, cx: &mut Context<Self>) {
+        if self.rail_selection != RailSelection::Space(space_id.clone()) {
+            self.rail_selection = RailSelection::Space(space_id);
             self.recalculate_derived_lists();
             cx.notify();
         }
@@ -125,7 +149,7 @@ impl RoomListModel {
     fn recalculate_derived_lists(&mut self) {
         let derived = derive_room_lists(
             &self.all_rooms,
-            self.selected_space_id.as_deref(),
+            &self.rail_selection,
             self.show_rooms_in_home,
         );
 

@@ -157,6 +157,7 @@ pub(crate) async fn process_items_vector(
                     sender_name: sender_name.clone(),
                     source: image.source.clone(),
                     mimetype: image.info.as_ref().and_then(|i| i.mimetype.clone()),
+                    dimensions: image.info.as_ref().and_then(|info| image_dimensions(info)),
                     caption: optional_caption(&image.body),
                     timestamp: formatted_timestamp.clone(),
                     is_own: event.is_own(),
@@ -258,6 +259,7 @@ pub(crate) async fn process_items_vector(
                     sender_name: sender_name.clone(),
                     source: matrix_sdk::ruma::events::room::MediaSource::Plain(url.clone()),
                     mimetype: None,
+                    dimensions: image_dimensions(&sticker.content().info),
                     caption: optional_caption_str(&sticker.content().body),
                     timestamp: formatted_timestamp.clone(),
                     is_own: event.is_own(),
@@ -451,4 +453,11 @@ pub(crate) async fn process_items_vector(
 
     tracing::info!("timeline: produced {} rendered items", rendered.len());
     rendered
+}
+
+fn image_dimensions(info: &matrix_sdk::ruma::events::room::ImageInfo) -> Option<(u32, u32)> {
+    Some((
+        u32::try_from(u64::from(info.width?)).ok()?,
+        u32::try_from(u64::from(info.height?)).ok()?,
+    ))
 }

@@ -1,3 +1,4 @@
+use crate::components::remote_image::avatar_fallback_label;
 use crate::models::appearance::{avatar_radius_for, element_radius_small};
 use crate::rooms::build_room_sections;
 use crate::rooms::{RoomInfo, RoomListModel};
@@ -36,6 +37,7 @@ impl RoomsList {
         };
 
         let avatar = if let Some(url) = &room.avatar_url {
+            let fallback = avatar_fallback_label(&room_name, &room.id);
             div()
                 .size_10()
                 .corner_radii(Corners::all(avatar_radius))
@@ -43,7 +45,8 @@ impl RoomsList {
                 .child(
                     crate::components::remote_image::RemoteImage::new(url.clone())
                         .size(px(40.0))
-                        .avatar(),
+                        .avatar()
+                        .fallback_text(fallback),
                 )
                 .into_any_element()
         } else {
@@ -178,11 +181,9 @@ impl RenderOnce for RoomsList {
 
                 let mut content_items: Vec<AnyElement> = Vec::new();
 
-                for section in build_room_sections(
-                    model_read.selected_space_id.as_deref(),
-                    &rooms_to_render,
-                    &all_rooms,
-                ) {
+                for section in
+                    build_room_sections(&model_read.rail_selection, &rooms_to_render, &all_rooms)
+                {
                     if let Some(heading) = section.heading {
                         content_items.push(
                             div()

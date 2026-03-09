@@ -2,6 +2,7 @@ mod body;
 mod replies;
 mod widgets;
 
+use crate::components::remote_image::avatar_fallback_label;
 use crate::models::appearance::avatar_radius_for;
 use crate::theme::onedark::{OneDarkTheme, OneDarkThemeExt};
 use crate::timeline::{ChatStyle, RenderedTimelineItem, TimelineModel};
@@ -81,9 +82,11 @@ pub(crate) fn render_avatar(
     cx: &App,
 ) -> AnyElement {
     if let Some(url) = avatar_url {
+        let fallback = avatar_fallback_label(sender_name, sender_id);
         crate::components::remote_image::RemoteImage::new(url.clone())
             .size(size)
             .avatar()
+            .fallback_text(fallback)
             .into_any_element()
     } else {
         div()
@@ -257,6 +260,7 @@ impl Render for TimelineView {
                     sender_name,
                     source,
                     mimetype,
+                    dimensions,
                     caption,
                     timestamp,
                     is_own,
@@ -272,6 +276,7 @@ impl Render for TimelineView {
                         sender_name,
                         source,
                         mimetype.as_ref(),
+                        *dimensions,
                         caption.as_ref(),
                         reply_to.as_ref(),
                         reply_to.as_ref().map(|reply| ReplyPreviewInteraction {
@@ -293,6 +298,7 @@ impl Render for TimelineView {
                         sender_name,
                         source,
                         mimetype.as_ref(),
+                        *dimensions,
                         caption.as_ref(),
                         reply_to.as_ref(),
                         reply_to.as_ref().map(|reply| ReplyPreviewInteraction {

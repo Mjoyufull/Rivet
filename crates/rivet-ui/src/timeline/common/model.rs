@@ -73,6 +73,7 @@ pub enum RenderedTimelineItem {
         sender_name: String,
         source: matrix_sdk::ruma::events::room::MediaSource,
         mimetype: Option<String>,
+        dimensions: Option<(u32, u32)>,
         caption: Option<String>,
         timestamp: String,
         is_own: bool,

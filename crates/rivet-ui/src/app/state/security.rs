@@ -12,10 +12,15 @@ impl AppView {
         cx.subscribe(
             &model,
             |this: &mut AppView, _, event: &VerificationEvent, cx| match event {
-                VerificationEvent::Finished => {
+                VerificationEvent::Finished { verified } => {
                     tracing::info!("Verification finished, clearing overlay");
                     this.verification_model = None;
-                    this.set_session_verified(true, cx);
+                    this.set_session_verified(*verified, cx);
+                    if let Some(client) = this.client.clone()
+                        && this.room_list_model.is_none()
+                    {
+                        this.finalize_post_login_setup(client, cx);
+                    }
                     cx.notify();
                 }
             },

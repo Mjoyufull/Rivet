@@ -1,4 +1,5 @@
 use super::AppView;
+use crate::components::remote_image::avatar_fallback_label;
 use crate::security::verification::SasVerificationPage;
 use crate::theme::onedark::OneDarkThemeExt;
 use gpui::prelude::FluentBuilder;
@@ -18,6 +19,53 @@ impl Render for AppView {
 
         if !self.is_logged_in {
             return div().size_full().child(self.login_view.clone());
+        }
+
+        if self.verification_gate_active {
+            if let Some(vm) = &self.verification_model {
+                return div()
+                    .size_full()
+                    .child(cx.new(|_| SasVerificationPage::new(vm.clone())));
+            }
+
+            return div()
+                .size_full()
+                .bg(theme.background)
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .child(
+                    div()
+                        .w_16()
+                        .h_16()
+                        .rounded_full()
+                        .bg(theme.sidebar_item_active)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_xl()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme.accent)
+                                .child("R"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text)
+                        .child("Verifying this session..."),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.text_muted)
+                        .child("Secure your keys before loading the main interface."),
+                );
         }
 
         if !self.is_initial_sync_complete(cx) {
@@ -115,11 +163,16 @@ impl Render for AppView {
                                     .child(
                                         if let Some(url) = self.sidebar.read(cx).avatar_url.clone()
                                         {
+                                            let fallback = avatar_fallback_label(
+                                                &self.sidebar.read(cx).display_name,
+                                                &self.sidebar.read(cx).user_id,
+                                            );
                                             crate::components::remote_image::RemoteImage::new(
                                                 url.clone(),
                                             )
                                             .size(px(96.0))
                                             .avatar()
+                                            .fallback_text(fallback)
                                             .into_any_element()
                                         } else {
                                             div()

@@ -10,8 +10,20 @@ pub struct RemoteImage {
     source: Option<matrix_sdk::ruma::events::room::MediaSource>,
     mimetype: Option<String>,
     size: Option<Pixels>,
+    frame_size: Option<Size<Pixels>>,
     is_avatar: bool,
     object_fit: Option<ObjectFit>,
+    fallback_text: Option<String>,
+}
+
+pub fn avatar_fallback_label(primary: &str, secondary: &str) -> String {
+    primary
+        .chars()
+        .find(|c| c.is_alphanumeric())
+        .or_else(|| secondary.chars().find(|c| c.is_alphanumeric()))
+        .unwrap_or('?')
+        .to_string()
+        .to_uppercase()
 }
 
 impl RemoteImage {
@@ -21,8 +33,10 @@ impl RemoteImage {
             source: None,
             mimetype: None,
             size: None,
+            frame_size: None,
             is_avatar: false,
             object_fit: None,
+            fallback_text: None,
         }
     }
 
@@ -41,8 +55,18 @@ impl RemoteImage {
         self
     }
 
+    pub fn frame_size(mut self, width: Pixels, height: Pixels) -> Self {
+        self.frame_size = Some(size(width, height));
+        self
+    }
+
     pub fn object_fit(mut self, fit: ObjectFit) -> Self {
         self.object_fit = Some(fit);
+        self
+    }
+
+    pub fn fallback_text(mut self, text: impl Into<String>) -> Self {
+        self.fallback_text = Some(text.into());
         self
     }
 
@@ -60,13 +84,15 @@ impl RemoteImage {
 impl RenderOnce for RemoteImage {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         // Mark as avatar for thumbnail optimization
-        if self.is_avatar {
+        if self.is_avatar && !self.url.is_empty() {
             cx.update_global::<crate::models::image_cache::ImageCache, _>(|this, _cx| {
                 this.mark_as_avatar(self.url.clone());
             });
         }
 
-        let image = if let Some(source) = self.source {
+        let image = if self.url.is_empty() && self.source.is_none() {
+            None
+        } else if let Some(source) = self.source {
             cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
                 |this, cx| {
                     this.get_media_source(source, self.url.clone(), self.mimetype.clone(), cx)
@@ -80,6 +106,8 @@ impl RenderOnce for RemoteImage {
 
         let radius = if let Some(size) = self.size {
             avatar_radius_for(size, cx)
+        } else if let Some(frame_size) = self.frame_size {
+            avatar_radius_for(frame_size.width.min(frame_size.height), cx)
         } else {
             get_image_radius(cx)
         };
@@ -98,21 +126,57 @@ impl RenderOnce for RemoteImage {
                     .corner_radii(corner_radii)
                     .child(element.size_full())
                     .into_any_element()
+            } else if let Some(frame_size) = self.frame_size {
+                div()
+                    .w(frame_size.width)
+                    .h(frame_size.height)
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .corner_radii(corner_radii)
+                    .child(element.size_full())
+                    .into_any_element()
             } else {
                 element.into_any_element()
             }
         } else {
             // Loading placeholder
             let placeholder = div()
-                .bg(rgb(0x282c34))
+                .bg(if self.is_avatar {
+                    rgb(0x313846)
+                } else {
+                    rgb(0x282c34)
+                })
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(div().text_xs().text_color(rgb(0x5c6370)).child("..."));
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(if self.is_avatar {
+                            rgb(0x61afef)
+                        } else {
+                            rgb(0x5c6370)
+                        })
+                        .font_weight(FontWeight::BOLD)
+                        .child(self.fallback_text.unwrap_or_else(|| {
+                            if self.is_avatar {
+                                "?".into()
+                            } else {
+                                "...".into()
+                            }
+                        })),
+                );
 
             if let Some(size) = self.size {
                 placeholder
                     .size(size)
+                    .flex_shrink_0()
+                    .corner_radii(corner_radii)
+                    .into_any_element()
+            } else if let Some(frame_size) = self.frame_size {
+                placeholder
+                    .w(frame_size.width)
+                    .h(frame_size.height)
                     .flex_shrink_0()
                     .corner_radii(corner_radii)
                     .into_any_element()

@@ -1,4 +1,4 @@
-use super::RoomInfo;
+use super::{RailSelection, RoomInfo};
 use matrix_sdk_ui::eyeball_im::Vector;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -15,7 +15,7 @@ pub(crate) struct RoomSection {
 
 pub(crate) fn derive_room_lists(
     all_rooms: &Vector<RoomInfo>,
-    selected_space_id: Option<&str>,
+    rail_selection: &RailSelection,
     show_rooms_in_home: bool,
 ) -> DerivedRoomLists {
     let mut rooms = Vec::new();
@@ -67,6 +67,11 @@ pub(crate) fn derive_room_lists(
         }
     }
 
+    let selected_space_id = match rail_selection {
+        RailSelection::Space(space_id) => Some(space_id.as_str()),
+        RailSelection::Home | RailSelection::Rooms => None,
+    };
+
     let (visible_spaces, visible_room_ids) = if let Some(selected_space_id) = selected_space_id {
         let mut visible_spaces = HashSet::new();
         let mut visible_room_ids = HashSet::new();
@@ -100,7 +105,7 @@ pub(crate) fn derive_room_lists(
         }
 
         if info.is_direct {
-            if selected_space_id.is_none() {
+            if matches!(rail_selection, RailSelection::Home) {
                 people.push(info.clone());
             }
             continue;
@@ -116,8 +121,20 @@ pub(crate) fn derive_room_lists(
             {
                 rooms.push(info.clone());
             }
-        } else if show_rooms_in_home {
-            rooms.push(info.clone());
+        } else {
+            match rail_selection {
+                RailSelection::Home => {
+                    if show_rooms_in_home {
+                        rooms.push(info.clone());
+                    }
+                }
+                RailSelection::Rooms => {
+                    if !belongs_to_joined_space(info, &space_ids) {
+                        rooms.push(info.clone());
+                    }
+                }
+                RailSelection::Space(_) => {}
+            }
         }
     }
 
@@ -129,11 +146,11 @@ pub(crate) fn derive_room_lists(
 }
 
 pub(crate) fn build_room_sections(
-    selected_space_id: Option<&str>,
+    rail_selection: &RailSelection,
     rooms: &[RoomInfo],
     all_rooms: &[RoomInfo],
 ) -> Vec<RoomSection> {
-    let Some(selected_space_id) = selected_space_id else {
+    let RailSelection::Space(selected_space_id) = rail_selection else {
         return vec![RoomSection {
             heading: Some("ROOMS".to_string()),
             rooms: rooms.to_vec(),
@@ -241,4 +258,10 @@ fn resolve_direct_child_space(
     }
 
     None
+}
+
+fn belongs_to_joined_space(room: &RoomInfo, joined_space_ids: &HashSet<String>) -> bool {
+    room.parent_spaces
+        .iter()
+        .any(|parent_id| joined_space_ids.contains(parent_id))
 }

@@ -1,4 +1,5 @@
-use super::MessageInput;
+use super::{MessageInput, RoomDetailsPanel};
+use crate::components::remote_image::avatar_fallback_label;
 use crate::models::appearance::avatar_radius_for;
 use crate::rooms::RoomListModel;
 use crate::theme::onedark::OneDarkThemeExt;
@@ -10,6 +11,7 @@ pub struct ChatView {
     room_list_model: Entity<RoomListModel>,
     timeline_model: Entity<TimelineModel>,
     timeline_view: Entity<TimelineView>,
+    room_details_panel: Entity<RoomDetailsPanel>,
     message_input: Entity<MessageInput>,
 }
 
@@ -21,12 +23,15 @@ impl ChatView {
         cx: &mut Context<Self>,
     ) -> Self {
         let timeline_view = cx.new(|cx| TimelineView::new(timeline_model.clone(), cx));
+        let room = timeline_model.read(cx).room.clone();
+        let room_details_panel = cx.new(|cx| RoomDetailsPanel::new(room, window, cx));
         let message_input = cx.new(|cx| MessageInput::new(timeline_model.clone(), window, cx));
 
         Self {
             room_list_model,
             timeline_model,
             timeline_view,
+            room_details_panel,
             message_input,
         }
     }
@@ -69,9 +74,14 @@ impl Render for ChatView {
                                 if let Some(url) =
                                     room_info.as_ref().and_then(|r| r.avatar_url.clone())
                                 {
+                                    let fallback = room_info
+                                        .as_ref()
+                                        .map(|r| avatar_fallback_label(&r.name, &r.id))
+                                        .unwrap_or_else(|| "?".to_string());
                                     crate::components::remote_image::RemoteImage::new(url)
                                         .size(px(40.0))
                                         .avatar()
+                                        .fallback_text(fallback)
                                         .into_any_element()
                                 } else {
                                     div()
@@ -127,17 +137,20 @@ impl Render for ChatView {
                     ),
             )
             .child(
-                // Content
                 div()
                     .flex_1()
                     .flex()
-                    .flex_col()
                     .overflow_hidden()
-                    .child(self.timeline_view.clone()),
-            )
-            .child(
-                // Footer
-                self.message_input.clone(),
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .child(self.timeline_view.clone())
+                            .child(self.message_input.clone()),
+                    )
+                    .child(self.room_details_panel.clone()),
             )
     }
 }
