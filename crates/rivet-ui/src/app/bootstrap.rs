@@ -1,6 +1,7 @@
 use super::state::AppView;
 use crate::auth::{LoginEvent, LoginView};
 use crate::models::image_cache::ImageCache;
+use crate::models::ui_preferences;
 use crate::settings::{SettingsEvent, SettingsView};
 use crate::sidebar::Sidebar;
 use gpui::AsyncApp;
@@ -8,7 +9,7 @@ use gpui::*;
 use gpui_component::Root;
 use rivet_core::client::RivetClient;
 
-pub(crate) fn build_root(window: &mut Window, cx: &mut App) -> Entity<Root> {
+pub fn build_root(window: &mut Window, cx: &mut App) -> Entity<Root> {
     let sidebar = cx.new(|_| Sidebar::new(None, None));
     let login_view = cx.new(|cx| LoginView::new(window, cx));
     let settings_view = cx.new(|cx| SettingsView::new(window, cx));
@@ -47,6 +48,27 @@ pub(crate) fn build_root(window: &mut Window, cx: &mut App) -> Entity<Root> {
                         room_model.update(cx, |model, cx| {
                             model.set_show_rooms_in_home(*val, cx);
                         });
+                    }
+                }
+                SettingsEvent::SetShowSidecart(val) => {
+                    ui_preferences::set_show_sidecart(*val, cx);
+                }
+                SettingsEvent::SetShowOtherRooms(val) => {
+                    if let Some(room_model) = &this.room_list_model {
+                        room_model.update(cx, |model, cx| {
+                            model.set_show_other_rooms(*val, cx);
+                        });
+                    } else {
+                        ui_preferences::set_show_other_rooms(*val, cx);
+                    }
+                }
+                SettingsEvent::SetRememberLastRoom(val) => {
+                    if let Some(room_model) = &this.room_list_model {
+                        room_model.update(cx, |model, cx| {
+                            model.set_remember_last_room(*val, cx);
+                        });
+                    } else {
+                        ui_preferences::set_remember_last_room(*val, cx);
                     }
                 }
             },

@@ -1,6 +1,6 @@
 use crate::components::remote_image::avatar_fallback_label;
 use crate::models::appearance::{avatar_radius_for, element_radius_small};
-use crate::rooms::RoomListModel;
+use crate::rooms::{RailSelection, RoomListModel};
 use crate::theme::onedark::OneDarkThemeExt;
 use gpui::*;
 use gpui_component::StyledExt;
@@ -31,6 +31,9 @@ impl RenderOnce for PeopleList {
 
         let people_content = if let Some(model_entity) = &self.model {
             let model_read = model_entity.read(cx);
+            if !matches!(model_read.rail_selection, RailSelection::Home) {
+                return div().into_any_element();
+            }
             if model_read.is_loading {
                 div()
                     .px_4()
@@ -43,6 +46,10 @@ impl RenderOnce for PeopleList {
                 let people_to_render: Vec<_> = model_read.people.clone();
                 let model_entity_clone = model_entity.clone();
                 let theme_clone = theme.clone();
+
+                if people_to_render.is_empty() {
+                    return div().into_any_element();
+                }
 
                 div().children(people_to_render.into_iter().map(move |room| {
                     let active = selected_id.as_ref() == Some(&room.id);
@@ -64,6 +71,7 @@ impl RenderOnce for PeopleList {
                         let fallback = avatar_fallback_label(&room_name, &room.id);
                         div()
                             .size_10()
+                            .flex_shrink_0()
                             .corner_radii(Corners::all(avatar_radius))
                             .overflow_hidden()
                             .child(
@@ -75,6 +83,7 @@ impl RenderOnce for PeopleList {
                     } else {
                         div()
                             .size_10()
+                            .flex_shrink_0()
                             .bg(if active {
                                 theme_inner.accent
                             } else {
@@ -137,6 +146,7 @@ impl RenderOnce for PeopleList {
                         .child(
                             div()
                                 .flex_1()
+                                .min_w_0()
                                 .text_sm()
                                 .font_weight(if has_unread {
                                     FontWeight::BOLD
@@ -144,6 +154,7 @@ impl RenderOnce for PeopleList {
                                     FontWeight::NORMAL
                                 })
                                 .text_color(text_color)
+                                .truncate()
                                 .child(room_name),
                         )
                         .child(if has_unread {
@@ -173,6 +184,15 @@ impl RenderOnce for PeopleList {
             div().child("Disconnected")
         };
 
+        if let Some(model_entity) = &self.model {
+            let model_read = model_entity.read(cx);
+            if !matches!(model_read.rail_selection, RailSelection::Home)
+                || model_read.people.is_empty()
+            {
+                return div().into_any_element();
+            }
+        }
+
         div()
             .flex()
             .flex_col()
@@ -188,5 +208,6 @@ impl RenderOnce for PeopleList {
                     .child("DIRECT MESSAGES"),
             )
             .child(people_content)
+            .into_any_element()
     }
 }

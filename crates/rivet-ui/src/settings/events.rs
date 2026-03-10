@@ -9,4 +9,7 @@ pub enum SettingsEvent {
     RecoverWithKey(String),
     SetChatStyle(ChatStyle),
     SetShowRoomsInHome(bool),
+    SetShowSidecart(bool),
+    SetShowOtherRooms(bool),
+    SetRememberLastRoom(bool),
 }

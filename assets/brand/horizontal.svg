@@ -1,62 +1,63 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
-
 <svg
-   width="1920"
-   height="1080"
-   viewBox="0 0 507.99999 285.75"
-   version="1.1"
-   id="svg1"
-   inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
-   sodipodi:docname="horizontal.svg"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
+    width="1920"
+    height="1080"
+    viewBox="0 0 507.99999 285.75"
+    version="1.1"
+    id="svg1"
+    inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
+    sodipodi:docname="horizontal.svg"
+    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+    xmlns="http://www.w3.org/2000/svg"
+    xmlns:svg="http://www.w3.org/2000/svg"
+>
   <sodipodi:namedview
-     id="namedview1"
-     pagecolor="#ffffff"
-     bordercolor="#000000"
-     borderopacity="0.25"
-     inkscape:showpageshadow="2"
-     inkscape:pageopacity="0.0"
-     inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#d1d1d1"
-     inkscape:document-units="px"
-     inkscape:zoom="0.18217943"
-     inkscape:cx="966.08051"
-     inkscape:cy="933.14595"
-     inkscape:window-width="1135"
-     inkscape:window-height="1030"
-     inkscape:window-x="0"
-     inkscape:window-y="0"
-     inkscape:window-maximized="1"
-     inkscape:current-layer="layer1" />
-  <defs
-     id="defs1" />
-  <g
-     inkscape:label="Layer 1"
-     inkscape:groupmode="layer"
-     id="layer1">
+        id="namedview1"
+        pagecolor="#ffffff"
+        bordercolor="#000000"
+        borderopacity="0.25"
+        inkscape:showpageshadow="2"
+        inkscape:pageopacity="0.0"
+        inkscape:pagecheckerboard="0"
+        inkscape:deskcolor="#d1d1d1"
+        inkscape:document-units="px"
+        inkscape:zoom="0.18217943"
+        inkscape:cx="966.08051"
+        inkscape:cy="933.14595"
+        inkscape:window-width="1135"
+        inkscape:window-height="1030"
+        inkscape:window-x="0"
+        inkscape:window-y="0"
+        inkscape:window-maximized="1"
+        inkscape:current-layer="layer1"
+    />
+  <defs id="defs1" />
+  <g inkscape:label="Layer 1" inkscape:groupmode="layer" id="layer1">
     <g
-       id="g3"
-       style="fill:#d7dae0;fill-opacity:1"
-       transform="translate(-518)">
+            id="g3"
+            style="fill:currentColor;fill-opacity:1"
+            transform="translate(-518)"
+        >
       <text
-         xml:space="preserve"
-         style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:56.7028px;font-family:'JetBrainsMono Nerd Font Propo';-inkscape-font-specification:'JetBrainsMono Nerd Font Propo, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:start;letter-spacing:0px;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:#d7dae0;fill-opacity:1;stroke:none;stroke-width:0.529167;stroke-dasharray:none;stroke-opacity:1"
-         x="738.02112"
-         y="164.87566"
-         id="text7-5"><tspan
-           sodipodi:role="line"
-           id="tspan7-9"
-           style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:56.7028px;font-family:'JetBrainsMono Nerd Font Propo';-inkscape-font-specification:'JetBrainsMono Nerd Font Propo, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#d7dae0;fill-opacity:1;stroke:none;stroke-width:0.529167;stroke-dasharray:none;stroke-opacity:1"
-           x="738.02112"
-           y="164.87566">Rivet</tspan></text>
+                xml:space="preserve"
+                style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:56.7028px;font-family:'JetBrainsMono Nerd Font Propo';-inkscape-font-specification:'JetBrainsMono Nerd Font Propo, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-align:start;letter-spacing:0px;writing-mode:lr-tb;direction:ltr;text-anchor:start;fill:currentColor;fill-opacity:1;stroke:none;stroke-width:0.529167;stroke-dasharray:none;stroke-opacity:1"
+                x="738.02112"
+                y="164.87566"
+                id="text7-5"
+            ><tspan
+                    sodipodi:role="line"
+                    id="tspan7-9"
+                    style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:56.7028px;font-family:'JetBrainsMono Nerd Font Propo';-inkscape-font-specification:'JetBrainsMono Nerd Font Propo, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:currentColor;fill-opacity:1;stroke:none;stroke-width:0.529167;stroke-dasharray:none;stroke-opacity:1"
+                    x="738.02112"
+                    y="164.87566"
+                >Rivet</tspan></text>
       <path
-         d="m 685.1493,118.60878 c -11.5861,-10e-6 -21.3106,8.17587 -23.7035,19.05723 l -21.7196,-9.30899 17.1922,36.72076 11.2996,-4.83899 c 4.3767,4.26842 10.3539,6.90243 16.9313,6.90243 6.5684,0 12.5381,-2.62723 16.9126,-6.88537 l 11.2505,4.82193 17.2573,-36.72541 -21.7211,9.30382 c -2.3961,-10.87651 -12.1167,-19.04742 -23.6993,-19.04741 z m 0,4.76198 c 9.6733,-1e-5 17.6645,6.98367 19.2267,16.20108 l -19.2479,8.24446 -19.2097,-8.23309 v -5.2e-4 c 1.558,-9.22289 9.5538,-16.21194 19.2309,-16.21193 z m -35.8103,14.28802 11.5446,4.9475 c 0,0.0899 0,0.17965 0,0.26975 0,5.01196 1.53,9.6754 4.147,13.54749 l -5.7505,2.4629 z m 71.5952,0.002 -9.9757,21.22557 -5.703,-2.44429 c 2.6243,-3.87574 4.1589,-8.54615 4.1589,-13.5661 0,-0.0936 -4e-4,-0.18723 0,-0.2806 v -5.2e-4 z m -16.3618,7.00732 c -0.3331,3.68351 -1.683,7.06609 -3.7683,9.86606 l -9.6304,-4.12739 z m -38.8468,0.0134 13.3548,5.72316 -9.6,4.11189 c -2.0755,-2.79299 -3.4202,-6.1647 -3.7548,-9.83505 z m 19.4004,8.31577 12.1217,5.19554 c -3.321,2.62353 -7.5213,4.18683 -12.0984,4.18683 -4.586,0 -8.7942,-1.56955 -12.1187,-4.20233 z"
-         style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:#d7dae0;fill-opacity:1;enable-background:accumulate;stop-color:#000000"
-         id="path85-6-7" />
+                d="m 685.1493,118.60878 c -11.5861,-10e-6 -21.3106,8.17587 -23.7035,19.05723 l -21.7196,-9.30899 17.1922,36.72076 11.2996,-4.83899 c 4.3767,4.26842 10.3539,6.90243 16.9313,6.90243 6.5684,0 12.5381,-2.62723 16.9126,-6.88537 l 11.2505,4.82193 17.2573,-36.72541 -21.7211,9.30382 c -2.3961,-10.87651 -12.1167,-19.04742 -23.6993,-19.04741 z m 0,4.76198 c 9.6733,-1e-5 17.6645,6.98367 19.2267,16.20108 l -19.2479,8.24446 -19.2097,-8.23309 v -5.2e-4 c 1.558,-9.22289 9.5538,-16.21194 19.2309,-16.21193 z m -35.8103,14.28802 11.5446,4.9475 c 0,0.0899 0,0.17965 0,0.26975 0,5.01196 1.53,9.6754 4.147,13.54749 l -5.7505,2.4629 z m 71.5952,0.002 -9.9757,21.22557 -5.703,-2.44429 c 2.6243,-3.87574 4.1589,-8.54615 4.1589,-13.5661 0,-0.0936 -4e-4,-0.18723 0,-0.2806 v -5.2e-4 z m -16.3618,7.00732 c -0.3331,3.68351 -1.683,7.06609 -3.7683,9.86606 l -9.6304,-4.12739 z m -38.8468,0.0134 13.3548,5.72316 -9.6,4.11189 c -2.0755,-2.79299 -3.4202,-6.1647 -3.7548,-9.83505 z m 19.4004,8.31577 12.1217,5.19554 c -3.321,2.62353 -7.5213,4.18683 -12.0984,4.18683 -4.586,0 -8.7942,-1.56955 -12.1187,-4.20233 z"
+                style="baseline-shift:baseline;display:inline;overflow:visible;vector-effect:none;fill:currentColor;fill-opacity:1;enable-background:accumulate;stop-color:#000000"
+                id="path85-6-7"
+            />
     </g>
   </g>
 </svg>

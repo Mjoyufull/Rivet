@@ -1,11 +1,11 @@
 use crate::components::remote_image::avatar_fallback_label;
 use crate::models::appearance::{avatar_radius_for, element_radius_small};
 use crate::rooms::build_room_sections;
-use crate::rooms::{RoomInfo, RoomListModel};
+use crate::rooms::{RailSelection, RoomInfo, RoomListModel};
 use crate::theme::onedark::OneDarkTheme;
 use crate::theme::onedark::OneDarkThemeExt;
 use gpui::*;
-use gpui_component::StyledExt;
+use gpui_component::{Icon, IconName, Sizable, StyledExt};
 
 pub struct RoomsList {
     model: Option<Entity<RoomListModel>>,
@@ -40,6 +40,7 @@ impl RoomsList {
             let fallback = avatar_fallback_label(&room_name, &room.id);
             div()
                 .size_10()
+                .flex_shrink_0()
                 .corner_radii(Corners::all(avatar_radius))
                 .overflow_hidden()
                 .child(
@@ -52,6 +53,7 @@ impl RoomsList {
         } else {
             div()
                 .size_10()
+                .flex_shrink_0()
                 .bg(if active {
                     theme.accent
                 } else {
@@ -114,6 +116,7 @@ impl RoomsList {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
                     .text_sm()
                     .font_weight(if has_unread {
                         FontWeight::BOLD
@@ -121,6 +124,7 @@ impl RoomsList {
                         FontWeight::NORMAL
                     })
                     .text_color(text_color)
+                    .truncate()
                     .child(room_name),
             )
             .child(if has_unread {
@@ -181,6 +185,66 @@ impl RenderOnce for RoomsList {
 
                 let mut content_items: Vec<AnyElement> = Vec::new();
 
+                if let RailSelection::Space(selected_space_id) = &model_read.rail_selection {
+                    if let Some(space) = all_rooms.iter().find(|room| room.id == *selected_space_id)
+                    {
+                        let model_entity_inner = model_entity.clone();
+                        let is_active = selected_room_id.is_none();
+                        let icon_color = if is_active {
+                            theme.text
+                        } else {
+                            theme.text_muted
+                        };
+                        let title = space.name.clone();
+
+                        content_items.push(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .corner_radii(Corners::all(item_radius))
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .bg(if is_active {
+                                    theme.sidebar_item_active
+                                } else {
+                                    gpui::transparent_black()
+                                })
+                                .cursor_pointer()
+                                .hover(move |style| {
+                                    if !is_active {
+                                        style.bg(theme.sidebar_item_hover)
+                                    } else {
+                                        style
+                                    }
+                                })
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    model_entity_inner.update(cx, |model, cx| {
+                                        model.clear_selected_room(cx);
+                                    });
+                                })
+                                .child(
+                                    Icon::new(IconName::FolderOpen)
+                                        .with_size(gpui_component::Size::Small)
+                                        .text_color(icon_color),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(if is_active {
+                                            theme.text
+                                        } else {
+                                            theme.text_muted
+                                        })
+                                        .child(title),
+                                )
+                                .into_any_element(),
+                        );
+                    }
+                }
+
                 for section in
                     build_room_sections(&model_read.rail_selection, &rooms_to_render, &all_rooms)
                 {
@@ -232,15 +296,6 @@ impl RenderOnce for RoomsList {
             .flex_col()
             .gap_1()
             .px_2()
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(theme.text_muted)
-                    .child("ROOMS"),
-            )
             .child(rooms_content)
     }
 }

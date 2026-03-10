@@ -2,20 +2,79 @@ use crate::components::remote_image::{RemoteImage, avatar_fallback_label};
 use crate::models::appearance::{avatar_radius_for, element_radius_small};
 use crate::rooms::resolve_direct_room_profile;
 use crate::theme::onedark::OneDarkThemeExt;
+use crate::timeline::TimelineView;
+use chrono::{DateTime, Local};
+use gpui::StatefulInteractiveElement;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::{Disableable, IconName, Sizable, StyledExt};
-use matrix_sdk::deserialized_responses::SyncOrStrippedState;
+use gpui_component::scroll::{ScrollableElement, Scrollbar};
+use gpui_component::{Icon, IconName, Sizable, StyledExt};
+use matrix_sdk::deserialized_responses::{SyncOrStrippedState, TimelineEvent};
 use matrix_sdk::room::{RoomMember, RoomMemberRole};
-use matrix_sdk::ruma::events::SyncStateEvent;
 use matrix_sdk::ruma::events::room::history_visibility::{
     HistoryVisibility, RoomHistoryVisibilityEventContent,
 };
-use matrix_sdk::ruma::events::room::pinned_events::RoomPinnedEventsEventContent;
+use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::topic::RoomTopicEventContent;
+use matrix_sdk::ruma::events::{AnySyncMessageLikeEvent, AnySyncTimelineEvent, SyncStateEvent};
 use matrix_sdk::{Room as MatrixRoom, RoomDisplayName, RoomMemberships};
+use std::cell::Cell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+const DETAILS_SCROLLBAR_GUTTER_WIDTH: f32 = 12.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailsTopBarMode {
+    RoomInfo,
+    Members,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DetailsPanelState {
+    mode: DetailsTopBarMode,
+    visible: bool,
+}
+
+#[derive(Clone)]
+pub struct DetailsPanelPreferences {
+    room_state: Rc<Cell<DetailsPanelState>>,
+    dm_state: Rc<Cell<DetailsPanelState>>,
+}
+
+impl Default for DetailsPanelPreferences {
+    fn default() -> Self {
+        Self {
+            room_state: Rc::new(Cell::new(DetailsPanelState {
+                mode: DetailsTopBarMode::Members,
+                visible: true,
+            })),
+            dm_state: Rc::new(Cell::new(DetailsPanelState {
+                mode: DetailsTopBarMode::RoomInfo,
+                visible: true,
+            })),
+        }
+    }
+}
+
+impl DetailsPanelPreferences {
+    fn state_for_room(&self, is_direct: bool) -> DetailsPanelState {
+        if is_direct {
+            self.dm_state.get()
+        } else {
+            self.room_state.get()
+        }
+    }
+
+    fn set_state_for_room(&self, is_direct: bool, state: DetailsPanelState) {
+        if is_direct {
+            self.dm_state.set(state);
+        } else {
+            self.room_state.set(state);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MemberRoleBucket {
@@ -39,55 +98,138 @@ struct MemberGroup {
 }
 
 #[derive(Clone, Debug)]
-struct DirectRoomInfo {
-    room_name: String,
-    room_avatar_url: Option<String>,
-    partner_display_name: String,
-    partner_user_id: String,
-    partner_avatar_url: Option<String>,
-    topic: Option<String>,
-    history_visibility: Option<String>,
-    pinned_count: usize,
-    member_count: usize,
-    encrypted: bool,
+struct PinnedMessageEntry {
+    event_id: String,
+    sender_id: String,
+    sender_name: String,
+    avatar_url: Option<String>,
+    body: String,
+    timestamp: String,
 }
 
 #[derive(Clone, Debug)]
-struct RoomMemberInfo {
+struct RoomDetailsData {
     room_name: String,
+    room_avatar_url: Option<String>,
+    hero_label: String,
+    subtitle: Option<String>,
+    topic: Option<String>,
+    history_visibility: Option<String>,
+    pinned_messages: Vec<PinnedMessageEntry>,
     member_count: usize,
+    encrypted: bool,
+    room_id: String,
     groups: Vec<MemberGroup>,
 }
 
-#[derive(Clone, Debug)]
-enum PanelMode {
-    Members(RoomMemberInfo),
-    Direct(DirectRoomInfo),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PanelView {
+    RoomInfo,
+    Members,
+    PinnedMessages,
 }
 
 pub struct RoomDetailsPanel {
     room: MatrixRoom,
+    is_direct: bool,
     loading: bool,
-    mode: Option<PanelMode>,
+    details: Option<RoomDetailsData>,
+    active_view: PanelView,
+    visible: bool,
+    preferences: DetailsPanelPreferences,
+    timeline_view: Entity<TimelineView>,
     search_input: Entity<InputState>,
+    members_scroll_handle: ScrollHandle,
 }
 
 impl RoomDetailsPanel {
-    pub fn new(room: MatrixRoom, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        room: MatrixRoom,
+        is_direct: bool,
+        preferences: DetailsPanelPreferences,
+        timeline_view: Entity<TimelineView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search members..."));
         cx.subscribe(&search_input, |_, _, _: &InputEvent, cx| cx.notify())
             .detach();
+        let panel_state = preferences.state_for_room(is_direct);
 
         let panel = Self {
             room,
+            is_direct,
             loading: true,
-            mode: None,
+            details: None,
+            active_view: match panel_state.mode {
+                DetailsTopBarMode::RoomInfo => PanelView::RoomInfo,
+                DetailsTopBarMode::Members => PanelView::Members,
+            },
+            visible: panel_state.visible,
+            preferences,
+            timeline_view,
             search_input,
+            members_scroll_handle: ScrollHandle::default(),
         };
 
         panel.spawn_refresh(cx);
         panel
+    }
+
+    pub fn show_room_info(&mut self, cx: &mut Context<Self>) {
+        self.active_view = PanelView::RoomInfo;
+        self.visible = true;
+        self.persist_panel_state();
+        cx.notify();
+    }
+
+    pub fn toggle_room_info(&mut self, cx: &mut Context<Self>) {
+        if self.visible
+            && matches!(
+                self.active_view,
+                PanelView::RoomInfo | PanelView::PinnedMessages
+            )
+        {
+            self.visible = false;
+        } else {
+            self.active_view = PanelView::RoomInfo;
+            self.visible = true;
+        }
+        self.persist_panel_state();
+        cx.notify();
+    }
+
+    pub fn toggle_members(&mut self, cx: &mut Context<Self>) {
+        if self.visible && matches!(self.active_view, PanelView::Members) {
+            self.visible = false;
+        } else {
+            self.active_view = PanelView::Members;
+            self.visible = true;
+        }
+        self.persist_panel_state();
+        cx.notify();
+    }
+
+    pub fn top_bar_mode(&self) -> DetailsTopBarMode {
+        match self.active_view {
+            PanelView::Members => DetailsTopBarMode::Members,
+            PanelView::RoomInfo | PanelView::PinnedMessages => DetailsTopBarMode::RoomInfo,
+        }
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    fn persist_panel_state(&self) {
+        self.preferences.set_state_for_room(
+            self.is_direct,
+            DetailsPanelState {
+                mode: self.top_bar_mode(),
+                visible: self.visible,
+            },
+        );
     }
 
     fn spawn_refresh(&self, cx: &mut Context<Self>) {
@@ -98,10 +240,10 @@ impl RoomDetailsPanel {
         async_cx
             .clone()
             .spawn(move |_: &mut AsyncApp| async move {
-                let mode = load_panel_mode(room).await;
+                let details = load_room_details(room).await;
                 let _ = panel.update(&mut async_cx, |this, cx| {
                     this.loading = false;
-                    this.mode = Some(mode);
+                    this.details = Some(details);
                     cx.notify();
                 });
             })
@@ -141,11 +283,318 @@ impl RoomDetailsPanel {
         }
     }
 
-    fn render_members_panel(
+    fn render_badge(&self, text: &str, accent: impl Into<Hsla>, cx: &App) -> AnyElement {
+        let accent = accent.into();
+        let radius = px((f32::from(element_radius_small(cx)) * 0.85).clamp(6.0, 16.0));
+        div()
+            .px_2()
+            .py_1()
+            .corner_radii(Corners::all(radius))
+            .bg(accent.opacity(0.18))
+            .text_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(accent)
+            .child(text.to_string())
+            .into_any_element()
+    }
+
+    fn render_static_info_row(
         &self,
-        info: &RoomMemberInfo,
+        icon: IconName,
+        label: &str,
+        value: impl Into<String>,
+        cx: &App,
+    ) -> AnyElement {
+        let theme = cx.onedark_theme();
+        let radius = element_radius_small(cx);
+        div()
+            .px_3()
+            .py_2()
+            .corner_radii(Corners::all(radius))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(icon)
+                                    .with_size(gpui_component::Size::Small)
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.text)
+                                    .child(label.to_string()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.text_muted)
+                            .truncate()
+                            .child(value.into()),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_nav_row(
+        &self,
+        icon: IconName,
+        label: &str,
+        value: impl Into<String>,
+        next_view: PanelView,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
+        let theme = cx.onedark_theme();
+        let radius = element_radius_small(cx);
+        let view = cx.entity().clone();
+
+        div()
+            .px_3()
+            .py_2()
+            .corner_radii(Corners::all(radius))
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.sidebar_item_hover))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.active_view = next_view;
+                    this.visible = true;
+                    this.persist_panel_state();
+                    cx.notify();
+                });
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(icon)
+                                    .with_size(gpui_component::Size::Small)
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.text)
+                                    .child(label.to_string()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.text_muted)
+                                    .child(value.into()),
+                            )
+                            .child(
+                                Icon::new(IconName::ChevronRight)
+                                    .with_size(gpui_component::Size::Small)
+                                    .text_color(theme.text_muted),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_panel_frame(
+        &self,
+        title: impl Into<String>,
+        subtitle: Option<String>,
+        show_back: bool,
+        body: AnyElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.onedark_theme();
+        let view = cx.entity().clone();
+
+        div()
+            .size_full()
+            .bg(theme.sidebar_background)
+            .border_l(px(1.0))
+            .border_color(theme.border)
+            .flex()
+            .flex_col()
+            .min_h_0()
+            .child(
+                div()
+                    .px_4()
+                    .py_3()
+                    .border_b(px(1.0))
+                    .border_color(theme.border)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(if show_back {
+                                Button::new("details-panel-back")
+                                    .icon(IconName::ChevronLeft)
+                                    .ghost()
+                                    .on_click(move |_, _, cx| {
+                                        let _ = view.update(cx, |this, cx| {
+                                            this.show_room_info(cx);
+                                        });
+                                    })
+                                    .into_any_element()
+                            } else {
+                                div().w_0().into_any_element()
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(theme.text)
+                                            .child(title.into()),
+                                    )
+                                    .children(subtitle.into_iter().map(|subtitle| {
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.text_muted)
+                                            .child(subtitle)
+                                            .into_any_element()
+                                    })),
+                            ),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(body))
+            .into_any_element()
+    }
+
+    fn render_room_info(&self, info: &RoomDetailsData, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.onedark_theme();
+        let body = div().size_full().min_h_0().overflow_y_scrollbar().child(
+            div()
+                .px_4()
+                .py_5()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_5()
+                .child(Self::render_avatar_tile(
+                    info.room_avatar_url.as_ref(),
+                    px(84.0),
+                    &info.hero_label,
+                    &info.room_id,
+                    cx,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xl()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme.text)
+                                .text_center()
+                                .child(info.room_name.clone()),
+                        )
+                        .children(info.subtitle.iter().map(|subtitle| {
+                            div()
+                                .text_sm()
+                                .text_color(theme.text_muted)
+                                .text_center()
+                                .child(subtitle.clone())
+                                .into_any_element()
+                        })),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .justify_center()
+                        .gap_2()
+                        .child(if info.encrypted {
+                            self.render_badge("Encrypted", rgb(0x56b6c2), cx)
+                        } else {
+                            self.render_badge("Unencrypted", rgb(0xe06c75), cx)
+                        })
+                        .children(
+                            info.history_visibility
+                                .as_ref()
+                                .map(|label| vec![self.render_badge(label, theme.accent, cx)])
+                                .unwrap_or_default(),
+                        ),
+                )
+                .child(div().w_full().h_px().bg(theme.border.opacity(0.7)))
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.text_muted)
+                                .child("TOPIC"),
+                        )
+                        .child(div().text_sm().text_color(theme.text).child(
+                            info.topic.clone().unwrap_or_else(|| {
+                                "No topic has been set for this conversation yet.".to_string()
+                            }),
+                        )),
+                )
+                .child(div().w_full().h_px().bg(theme.border.opacity(0.7)))
+                .child(div().w_full().flex().flex_col().gap_1().children(vec![
+                    self.render_nav_row(
+                        IconName::User,
+                        "People",
+                        info.member_count.to_string(),
+                        PanelView::Members,
+                        cx,
+                    ),
+                    self.render_nav_row(
+                        IconName::Star,
+                        "Pinned messages",
+                        info.pinned_messages.len().to_string(),
+                        PanelView::PinnedMessages,
+                        cx,
+                    ),
+                    self.render_static_info_row(
+                        IconName::Info,
+                        "Room ID",
+                        info.room_id.clone(),
+                        cx,
+                    ),
+                ])),
+        );
+
+        self.render_panel_frame("Room Info", None, false, body.into_any_element(), cx)
+    }
+
+    fn render_members_panel(&self, info: &RoomDetailsData, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.onedark_theme();
         let query = self.search_input.read(cx).text().to_string().to_lowercase();
         let card_radius = element_radius_small(cx);
@@ -173,41 +622,11 @@ impl RoomDetailsPanel {
             })
             .collect();
 
-        div()
-            .w(px(300.0))
-            .min_w(px(260.0))
-            .max_w(px(340.0))
-            .h_full()
-            .flex_shrink_0()
-            .bg(theme.sidebar_background)
-            .border_l(px(1.0))
-            .border_color(theme.border)
+        let body = div()
+            .size_full()
+            .min_h_0()
             .flex()
             .flex_col()
-            .child(
-                div()
-                    .px_4()
-                    .py_3()
-                    .border_b(px(1.0))
-                    .border_color(theme.border)
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme.text)
-                            .child(format!("{} Members", info.member_count)),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .truncate()
-                            .child(info.room_name.clone()),
-                    ),
-            )
             .child(
                 div()
                     .px_4()
@@ -216,294 +635,236 @@ impl RoomDetailsPanel {
                     .border_color(theme.border.opacity(0.65))
                     .child(Input::new(&self.search_input).prefix(IconName::Search)),
             )
-            .child(div().flex_1().overflow_y_scrollbar().child(
-                div().px_3().py_4().flex().flex_col().gap_5().children(
-                    if filtered_groups.is_empty() {
-                        vec![
-                            div()
-                                .px_1()
-                                .py_2()
-                                .text_sm()
-                                .text_color(theme.text_muted)
-                                .child("No matching members")
-                                .into_any_element(),
-                        ]
-                    } else {
-                        filtered_groups
-                            .into_iter()
-                            .map(|(label, members)| {
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .px_1()
-                                            .text_xs()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(theme.text_muted)
-                                            .child(format!("{label} — {}", members.len())),
-                                    )
-                                    .children(members.into_iter().map(|member| {
-                                        div()
-                                            .px_2()
-                                            .py_2()
-                                            .corner_radii(Corners::all(card_radius))
-                                            .hover(|style| style.bg(theme.sidebar_item_hover))
-                                            .child(
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(
+                        div()
+                            .id("members-scroll-content")
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .track_scroll(&self.members_scroll_handle)
+                            .overflow_y_scroll()
+                            .child(
+                                div().px_3().py_4().flex().flex_col().gap_5().children(
+                                    if filtered_groups.is_empty() {
+                                        vec![
+                                            div()
+                                                .px_1()
+                                                .py_2()
+                                                .text_sm()
+                                                .text_color(theme.text_muted)
+                                                .child("No matching members")
+                                                .into_any_element(),
+                                        ]
+                                    } else {
+                                        filtered_groups
+                                            .into_iter()
+                                            .map(|(label, members)| {
                                                 div()
                                                     .flex()
-                                                    .items_center()
-                                                    .gap_3()
-                                                    .child(Self::render_avatar_tile(
-                                                        member.avatar_url.as_ref(),
-                                                        px(36.0),
-                                                        &member.display_name,
-                                                        &member.user_id,
-                                                        cx,
-                                                    ))
+                                                    .flex_col()
+                                                    .gap_2()
                                                     .child(
                                                         div()
-                                                            .flex_1()
-                                                            .min_w_0()
-                                                            .flex()
-                                                            .flex_col()
+                                                            .px_1()
+                                                            .text_xs()
+                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                            .text_color(theme.text_muted)
+                                                            .child(format!("{label} — {}", members.len())),
+                                                    )
+                                                    .children(members.into_iter().map(|member| {
+                                                        div()
+                                                            .px_2()
+                                                            .py_2()
+                                                            .corner_radii(Corners::all(card_radius))
+                                                            .hover(|style| style.bg(theme.sidebar_item_hover))
                                                             .child(
                                                                 div()
-                                                                    .text_sm()
-                                                                    .font_weight(
-                                                                        FontWeight::SEMIBOLD,
-                                                                    )
-                                                                    .text_color(theme.text)
-                                                                    .truncate()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_3()
+                                                                    .child(Self::render_avatar_tile(
+                                                                        member.avatar_url.as_ref(),
+                                                                        px(36.0),
+                                                                        &member.display_name,
+                                                                        &member.user_id,
+                                                                        cx,
+                                                                    ))
                                                                     .child(
-                                                                        member.display_name.clone(),
+                                                                        div()
+                                                                            .flex_1()
+                                                                            .min_w_0()
+                                                                            .flex()
+                                                                            .flex_col()
+                                                                            .child(
+                                                                                div()
+                                                                                    .text_sm()
+                                                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                                                    .text_color(theme.text)
+                                                                                    .truncate()
+                                                                                    .child(
+                                                                                        member.display_name.clone(),
+                                                                                    ),
+                                                                            )
+                                                                            .child(
+                                                                                div()
+                                                                                    .text_xs()
+                                                                                    .text_color(theme.text_muted)
+                                                                                    .truncate()
+                                                                                    .child(member.user_id),
+                                                                            ),
                                                                     ),
                                                             )
-                                                            .child(
-                                                                div()
-                                                                    .text_xs()
-                                                                    .text_color(theme.text_muted)
-                                                                    .truncate()
-                                                                    .child(member.user_id),
-                                                            ),
-                                                    ),
-                                            )
-                                            .into_any_element()
-                                    }))
-                            })
-                            .map(|section| section.into_any_element())
-                            .collect::<Vec<_>>()
-                    },
-                ),
-            ))
+                                                            .into_any_element()
+                                                    }))
+                                                    .into_any_element()
+                                            })
+                                            .collect::<Vec<_>>()
+                                    },
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(px(DETAILS_SCROLLBAR_GUTTER_WIDTH))
+                            .h_full()
+                            .flex_shrink_0()
+                            .child(
+                                Scrollbar::vertical(&self.members_scroll_handle)
+                                    .id("members-scrollbar-right"),
+                            ),
+                    ),
+            );
+
+        self.render_panel_frame(
+            "Members",
+            Some(info.room_name.clone()),
+            true,
+            body.into_any_element(),
+            cx,
+        )
     }
 
-    fn render_badge(&self, text: &str, accent: impl Into<Hsla>, cx: &App) -> AnyElement {
-        let accent = accent.into();
-        let radius = px((f32::from(element_radius_small(cx)) * 0.85).clamp(6.0, 16.0));
-        div()
-            .px_2()
-            .py_1()
-            .corner_radii(Corners::all(radius))
-            .bg(accent.opacity(0.18))
-            .text_xs()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(accent)
-            .child(text.to_string())
-            .into_any_element()
-    }
-
-    fn render_info_row(
+    fn render_pinned_messages_panel(
         &self,
-        icon: IconName,
-        label: &str,
-        value: impl Into<String>,
-        cx: &App,
+        info: &RoomDetailsData,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.onedark_theme();
-        let radius = element_radius_small(cx);
-        div()
-            .px_3()
-            .py_2()
-            .corner_radii(Corners::all(radius))
-            .hover(|style| style.bg(theme.sidebar_item_hover))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
+        let card_radius = element_radius_small(cx);
+        let title = if info.pinned_messages.len() == 1 {
+            "1 Pinned message".to_string()
+        } else {
+            format!("{} Pinned messages", info.pinned_messages.len())
+        };
+        let timeline_view = self.timeline_view.clone();
+
+        let body = div().size_full().min_h_0().overflow_y_scrollbar().child(
+            div().px_4().py_4().flex().flex_col().gap_4().children(
+                if info.pinned_messages.is_empty() {
+                    vec![
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                gpui_component::Icon::new(icon)
-                                    .with_size(gpui_component::Size::Small)
-                                    .text_color(theme.text_muted),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.text)
-                                    .child(label.to_string()),
-                            ),
-                    )
-                    .child(
-                        div()
+                            .py_3()
                             .text_sm()
                             .text_color(theme.text_muted)
-                            .child(value.into()),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    fn render_direct_panel(
-        &self,
-        info: &DirectRoomInfo,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.onedark_theme();
-
-        div()
-            .w(px(300.0))
-            .min_w(px(260.0))
-            .max_w(px(340.0))
-            .h_full()
-            .flex_shrink_0()
-            .bg(theme.sidebar_background)
-            .border_l(px(1.0))
-            .border_color(theme.border)
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .px_4()
-                    .py_3()
-                    .border_b(px(1.0))
-                    .border_color(theme.border)
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(theme.text)
-                            .child("Room Info"),
-                    )
-                    .child(
-                        Button::new("room-info-indicator")
-                            .icon(IconName::PanelRight)
-                            .ghost()
-                            .disabled(true),
-                    ),
-            )
-            .child(
-                div().flex_1().overflow_y_scrollbar().child(
-                    div()
-                        .px_4()
-                        .py_5()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap_5()
-                        .child(Self::render_avatar_tile(
-                            info.room_avatar_url
-                                .as_ref()
-                                .or_else(|| info.partner_avatar_url.as_ref()),
-                            px(84.0),
-                            &info.partner_display_name,
-                            &info.partner_user_id,
-                            cx,
-                        ))
-                        .child(
+                            .child("No pinned messages")
+                            .into_any_element(),
+                    ]
+                } else {
+                    info.pinned_messages
+                        .iter()
+                        .map(|entry| {
+                            let event_id = entry.event_id.clone();
+                            let timeline_view = timeline_view.clone();
                             div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .text_xl()
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(theme.text)
-                                        .child(info.room_name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(theme.text_muted)
-                                        .child(info.partner_user_id.clone()),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .justify_center()
-                                .gap_2()
-                                .child(if info.encrypted {
-                                    self.render_badge("Encrypted", rgb(0x56b6c2), cx)
-                                } else {
-                                    self.render_badge("Unencrypted", rgb(0xe06c75), cx)
+                                .pb_4()
+                                .border_b(px(1.0))
+                                .border_color(theme.border.opacity(0.5))
+                                .cursor_pointer()
+                                .hover(|style| style.bg(theme.sidebar_item_hover.opacity(0.35)))
+                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                    let _ = timeline_view.update(cx, |this, cx| {
+                                        this.jump_to_event(event_id.clone(), cx);
+                                    });
                                 })
-                                .children(
-                                    info.history_visibility
-                                        .as_ref()
-                                        .map(|label| {
-                                            vec![self.render_badge(label, theme.accent, cx)]
-                                        })
-                                        .unwrap_or_default(),
-                                ),
-                        )
-                        .child(div().w_full().h_px().bg(theme.border.opacity(0.7)))
-                        .child(
-                            div()
-                                .w_full()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
                                 .child(
                                     div()
-                                        .text_xs()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.text_muted)
-                                        .child("TOPIC"),
+                                        .flex()
+                                        .gap_3()
+                                        .child(Self::render_avatar_tile(
+                                            entry.avatar_url.as_ref(),
+                                            px(36.0),
+                                            &entry.sender_name,
+                                            &entry.sender_id,
+                                            cx,
+                                        ))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .text_color(theme.accent)
+                                                                .child(entry.sender_name.clone()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(theme.text_muted)
+                                                                .child(entry.timestamp.clone()),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .px_3()
+                                                        .py_3()
+                                                        .corner_radii(Corners::all(card_radius))
+                                                        .bg(theme.sidebar_item_hover)
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(theme.text)
+                                                                .whitespace_normal()
+                                                                .child(entry.body.clone()),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.text_muted)
+                                                        .truncate()
+                                                        .child(entry.event_id.clone()),
+                                                ),
+                                        ),
                                 )
-                                .child(div().text_sm().text_color(theme.text).child(
-                                    info.topic.clone().unwrap_or_else(|| {
-                                        "No topic has been set for this conversation yet."
-                                            .to_string()
-                                    }),
-                                )),
-                        )
-                        .child(div().w_full().h_px().bg(theme.border.opacity(0.7)))
-                        .child(div().w_full().flex().flex_col().gap_1().children(vec![
-                            self.render_info_row(
-                                IconName::User,
-                                "People",
-                                info.member_count.to_string(),
-                                cx,
-                            ),
-                            self.render_info_row(
-                                IconName::Star,
-                                "Pinned messages",
-                                info.pinned_count.to_string(),
-                                cx,
-                            ),
-                            self.render_info_row(
-                                IconName::Info,
-                                "Room ID",
-                                self.room.room_id().to_string(),
-                                cx,
-                            ),
-                        ])),
-                ),
-            )
+                                .into_any_element()
+                        })
+                        .collect::<Vec<_>>()
+                },
+            ),
+        );
+
+        self.render_panel_frame(
+            title,
+            Some(info.room_name.clone()),
+            true,
+            body.into_any_element(),
+            cx,
+        )
     }
 }
 
@@ -513,11 +874,7 @@ impl Render for RoomDetailsPanel {
 
         if self.loading {
             return div()
-                .w(px(300.0))
-                .min_w(px(260.0))
-                .max_w(px(340.0))
-                .h_full()
-                .flex_shrink_0()
+                .size_full()
                 .bg(theme.sidebar_background)
                 .border_l(px(1.0))
                 .border_color(theme.border)
@@ -533,17 +890,14 @@ impl Render for RoomDetailsPanel {
                 .into_any_element();
         }
 
-        match self.mode.as_ref() {
-            Some(PanelMode::Members(info)) => {
-                self.render_members_panel(info, cx).into_any_element()
-            }
-            Some(PanelMode::Direct(info)) => self.render_direct_panel(info, cx).into_any_element(),
+        match self.details.as_ref() {
+            Some(info) => match self.active_view {
+                PanelView::RoomInfo => self.render_room_info(info, cx),
+                PanelView::Members => self.render_members_panel(info, cx),
+                PanelView::PinnedMessages => self.render_pinned_messages_panel(info, cx),
+            },
             None => div()
-                .w(px(300.0))
-                .min_w(px(260.0))
-                .max_w(px(340.0))
-                .h_full()
-                .flex_shrink_0()
+                .size_full()
                 .bg(theme.sidebar_background)
                 .border_l(px(1.0))
                 .border_color(theme.border)
@@ -632,28 +986,228 @@ fn extract_history_visibility(
     })
 }
 
-fn extract_pinned_count(
-    event: Option<
-        matrix_sdk::deserialized_responses::RawSyncOrStrippedState<RoomPinnedEventsEventContent>,
-    >,
-) -> usize {
-    let Some(event) = event else {
-        return 0;
-    };
+async fn load_full_members(room: &MatrixRoom) -> Vec<RoomMember> {
+    let memberships = RoomMemberships::ACTIVE;
+    let local_members = room.members_no_sync(memberships).await.unwrap_or_default();
 
-    match event.deserialize().ok() {
-        Some(SyncOrStrippedState::Sync(SyncStateEvent::Original(ev))) => ev.content.pinned.len(),
-        Some(SyncOrStrippedState::Stripped(ev)) => {
-            ev.content.pinned.map(|pinned| pinned.len()).unwrap_or(0)
+    if room.are_members_synced() {
+        return local_members;
+    }
+
+    let _ = room.sync_members().await;
+    room.members(memberships).await.unwrap_or(local_members)
+}
+
+fn build_member_groups(
+    members: Vec<RoomMember>,
+) -> (Vec<MemberGroup>, HashMap<String, MemberEntry>) {
+    let mut entries = members
+        .into_iter()
+        .map(|member| {
+            let entry = MemberEntry {
+                user_id: member.user_id().to_string(),
+                display_name: member_display_name(&member),
+                avatar_url: member.avatar_url().map(|url| url.to_string()),
+                role: bucket_for_role(member.suggested_role_for_power_level()),
+            };
+            (entry.user_id.clone(), entry)
+        })
+        .collect::<Vec<_>>();
+
+    entries.sort_by(|(_, a), (_, b)| {
+        a.role.cmp(&b.role).then_with(|| {
+            a.display_name
+                .to_lowercase()
+                .cmp(&b.display_name.to_lowercase())
+        })
+    });
+
+    let mut admins = Vec::new();
+    let mut moderators = Vec::new();
+    let mut members_group = Vec::new();
+    let mut lookup = HashMap::new();
+
+    for (_, entry) in entries {
+        lookup.insert(entry.user_id.clone(), entry.clone());
+        match entry.role {
+            MemberRoleBucket::Admin => admins.push(entry),
+            MemberRoleBucket::Moderator => moderators.push(entry),
+            MemberRoleBucket::Member => members_group.push(entry),
         }
-        _ => 0,
+    }
+
+    let mut groups = Vec::new();
+    if !admins.is_empty() {
+        groups.push(MemberGroup {
+            label: "Admin",
+            members: admins,
+        });
+    }
+    if !moderators.is_empty() {
+        groups.push(MemberGroup {
+            label: "Moderator",
+            members: moderators,
+        });
+    }
+    if !members_group.is_empty() {
+        groups.push(MemberGroup {
+            label: "Members",
+            members: members_group,
+        });
+    }
+
+    (groups, lookup)
+}
+
+fn fallback_sender_name(sender_id: &str) -> String {
+    sender_id
+        .trim_start_matches('@')
+        .split(':')
+        .next()
+        .unwrap_or(sender_id)
+        .to_string()
+}
+
+fn truncate_preview(body: String) -> String {
+    const LIMIT: usize = 320;
+    if body.chars().count() > LIMIT {
+        format!("{}…", body.chars().take(LIMIT).collect::<String>())
+    } else {
+        body
     }
 }
 
-async fn load_panel_mode(room: MatrixRoom) -> PanelMode {
+fn format_preview_timestamp(timestamp: std::time::SystemTime) -> String {
+    let dt: DateTime<Local> = timestamp.into();
+    let now = Local::now();
+
+    if dt.date_naive() == now.date_naive() {
+        dt.format("%-I:%M %p").to_string()
+    } else {
+        dt.format("%-m/%-d/%y, %-I:%M %p").to_string()
+    }
+}
+
+fn pinned_entry_from_timeline_event(
+    event_id: String,
+    event: TimelineEvent,
+    member_lookup: &HashMap<String, MemberEntry>,
+) -> Option<PinnedMessageEntry> {
+    if event.kind.is_utd() {
+        return Some(PinnedMessageEntry {
+            event_id,
+            sender_id: String::new(),
+            sender_name: "Encrypted event".to_string(),
+            avatar_url: None,
+            body: "Unable to decrypt pinned message".to_string(),
+            timestamp: String::new(),
+        });
+    }
+
+    match event.raw().deserialize().ok()? {
+        AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::RoomMessage(message)) => {
+            let sender_id = message.sender().to_string();
+            let member = member_lookup.get(&sender_id);
+            let sender_name = member
+                .map(|member| member.display_name.clone())
+                .unwrap_or_else(|| fallback_sender_name(&sender_id));
+            let avatar_url = member.and_then(|member| member.avatar_url.clone());
+
+            if let Some(original) = message.as_original() {
+                let body = match &original.content.msgtype {
+                    MessageType::Text(text) => text.body.clone(),
+                    MessageType::Notice(notice) => notice.body.clone(),
+                    MessageType::Emote(emote) => format!("* {}", emote.body),
+                    MessageType::Image(image) => format!("[Image] {}", image.body),
+                    MessageType::Video(video) => format!("[Video] {}", video.body),
+                    MessageType::Audio(audio) => format!("[Audio] {}", audio.body),
+                    MessageType::File(file) => format!("[File] {}", file.body),
+                    MessageType::Location(location) => format!("[Location] {}", location.body),
+                    MessageType::VerificationRequest(request) => {
+                        format!("[Verification request] {}", request.body)
+                    }
+                    other => format!("[{}] {}", other.msgtype(), original.content.body()),
+                };
+
+                Some(PinnedMessageEntry {
+                    event_id,
+                    sender_id,
+                    sender_name,
+                    avatar_url,
+                    body: truncate_preview(body),
+                    timestamp: format_preview_timestamp(
+                        original
+                            .origin_server_ts
+                            .to_system_time()
+                            .unwrap_or(std::time::SystemTime::now()),
+                    ),
+                })
+            } else {
+                Some(PinnedMessageEntry {
+                    event_id,
+                    sender_id,
+                    sender_name,
+                    avatar_url,
+                    body: "Pinned message unavailable".to_string(),
+                    timestamp: String::new(),
+                })
+            }
+        }
+        AnySyncTimelineEvent::MessageLike(_) => Some(PinnedMessageEntry {
+            event_id,
+            sender_id: String::new(),
+            sender_name: "Pinned event".to_string(),
+            avatar_url: None,
+            body: "Pinned event".to_string(),
+            timestamp: String::new(),
+        }),
+        AnySyncTimelineEvent::State(_) => Some(PinnedMessageEntry {
+            event_id,
+            sender_id: String::new(),
+            sender_name: "State event".to_string(),
+            avatar_url: None,
+            body: "Pinned state event".to_string(),
+            timestamp: String::new(),
+        }),
+    }
+}
+
+async fn load_pinned_messages(
+    room: &MatrixRoom,
+    member_lookup: &HashMap<String, MemberEntry>,
+) -> Vec<PinnedMessageEntry> {
+    let pinned_ids = if let Some(ids) = room.pinned_event_ids() {
+        ids.to_vec()
+    } else {
+        room.load_pinned_events()
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    };
+
+    let mut messages = Vec::new();
+    for event_id in pinned_ids {
+        match room.load_or_fetch_event(&event_id, None).await {
+            Ok(event) => {
+                if let Some(entry) =
+                    pinned_entry_from_timeline_event(event_id.to_string(), event, member_lookup)
+                {
+                    messages.push(entry);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(?error, %event_id, "failed to load pinned event");
+            }
+        }
+    }
+
+    messages
+}
+
+async fn load_room_details(room: MatrixRoom) -> RoomDetailsData {
     let is_direct = room.is_direct().await.unwrap_or(false);
-    let display_name = room.display_name().await;
-    let room_name = room_display_name_or_id(&room, display_name);
+    let room_name = room_display_name_or_id(&room, room.display_name().await);
     let encrypted = room
         .latest_encryption_state()
         .await
@@ -671,121 +1225,42 @@ async fn load_panel_mode(room: MatrixRoom) -> PanelMode {
             .ok()
             .flatten(),
     );
-    let pinned_count = extract_pinned_count(
-        room.get_state_event_static::<RoomPinnedEventsEventContent>()
-            .await
-            .ok()
-            .flatten(),
-    );
-    let member_count = room.active_members_count() as usize;
 
-    let mut members = match room.members_no_sync(RoomMemberships::ACTIVE).await {
-        Ok(members) => members,
-        Err(_) => room
-            .members(RoomMemberships::ACTIVE)
-            .await
-            .unwrap_or_default(),
+    let members = load_full_members(&room).await;
+    let member_count = members.len();
+    let (groups, member_lookup) = build_member_groups(members);
+    let pinned_messages = load_pinned_messages(&room, &member_lookup).await;
+
+    let direct_profile = if is_direct {
+        resolve_direct_room_profile(&room).await
+    } else {
+        None
     };
 
-    members.sort_by(|a, b| {
-        bucket_for_role(a.suggested_role_for_power_level())
-            .cmp(&bucket_for_role(b.suggested_role_for_power_level()))
-            .then_with(|| {
-                member_display_name(a)
-                    .to_lowercase()
-                    .cmp(&member_display_name(b).to_lowercase())
-            })
-    });
-
-    if is_direct {
-        let direct_profile = resolve_direct_room_profile(&room).await;
-        let own_user_id = room.own_user_id().to_owned();
-        let partner = members
-            .iter()
-            .find(|member| member.user_id() != own_user_id)
-            .cloned()
-            .or_else(|| members.first().cloned());
-
-        let partner_display_name = direct_profile
-            .as_ref()
-            .map(|profile| profile.display_name.clone())
-            .or_else(|| partner.as_ref().map(member_display_name))
-            .unwrap_or_else(|| room_name.clone());
-        let partner_user_id = direct_profile
-            .as_ref()
-            .map(|profile| profile.user_id.clone())
-            .or_else(|| partner.as_ref().map(|member| member.user_id().to_string()))
-            .unwrap_or_else(|| room.room_id().to_string());
-        let partner_avatar_url = direct_profile
+    let room_avatar_url = room.avatar_url().map(|url| url.to_string()).or_else(|| {
+        direct_profile
             .as_ref()
             .and_then(|profile| profile.avatar_url.clone())
-            .or_else(|| {
-                partner
-                    .as_ref()
-                    .and_then(|member| member.avatar_url().map(|url| url.to_string()))
-            });
+    });
+    let hero_label = direct_profile
+        .as_ref()
+        .map(|profile| profile.display_name.clone())
+        .unwrap_or_else(|| room_name.clone());
+    let subtitle = direct_profile
+        .as_ref()
+        .map(|profile| profile.user_id.clone());
 
-        PanelMode::Direct(DirectRoomInfo {
-            room_name,
-            room_avatar_url: room.avatar_url().map(|url| url.to_string()),
-            partner_display_name,
-            partner_user_id,
-            partner_avatar_url,
-            topic,
-            history_visibility,
-            pinned_count,
-            member_count,
-            encrypted,
-        })
-    } else {
-        let mut admins = Vec::new();
-        let mut moderators = Vec::new();
-        let mut members_group = Vec::new();
-
-        for member in members {
-            let entry = MemberEntry {
-                user_id: member.user_id().to_string(),
-                display_name: member_display_name(&member),
-                avatar_url: member.avatar_url().map(|url| url.to_string()),
-                role: bucket_for_role(member.suggested_role_for_power_level()),
-            };
-
-            match entry.role {
-                MemberRoleBucket::Admin => admins.push(entry),
-                MemberRoleBucket::Moderator => moderators.push(entry),
-                MemberRoleBucket::Member => members_group.push(entry),
-            }
-        }
-
-        let mut groups = Vec::new();
-        if !admins.is_empty() {
-            groups.push(MemberGroup {
-                label: "Admin",
-                members: admins,
-            });
-        }
-        if !moderators.is_empty() {
-            groups.push(MemberGroup {
-                label: "Moderator",
-                members: moderators,
-            });
-        }
-        if !members_group.is_empty() {
-            groups.push(MemberGroup {
-                label: "Members",
-                members: members_group,
-            });
-        }
-
-        let _ = topic;
-        let _ = history_visibility;
-        let _ = pinned_count;
-        let _ = encrypted;
-
-        PanelMode::Members(RoomMemberInfo {
-            room_name,
-            member_count,
-            groups,
-        })
+    RoomDetailsData {
+        room_name,
+        room_avatar_url,
+        hero_label,
+        subtitle,
+        topic,
+        history_visibility,
+        pinned_messages,
+        member_count,
+        encrypted,
+        room_id: room.room_id().to_string(),
+        groups,
     }
 }

@@ -36,6 +36,9 @@ impl Render for SettingsView {
                     .left_0()
                     .size_full()
                     .bg(hsla(0.0, 0.0, 0.0, 0.5))
+                    .on_scroll_wheel(|_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         view_for_backdrop.update(cx, |_, cx| cx.emit(SettingsEvent::Close));
                     }),
@@ -49,6 +52,9 @@ impl Render for SettingsView {
                     .flex()
                     .items_center()
                     .justify_center()
+                    .on_scroll_wheel(|_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     .child(
                         div()
                             .relative()
@@ -71,6 +77,9 @@ impl Render for SettingsView {
                                     .flex()
                                     .overflow_hidden()
                                     .on_mouse_down(MouseButton::Left, |_, _, cx: &mut App| {
+                                        cx.stop_propagation();
+                                    })
+                                    .on_scroll_wheel(|_, _, cx| {
                                         cx.stop_propagation();
                                     })
                                     .child(self.render_sidebar(modal_width, inner_panel_radius, cx))

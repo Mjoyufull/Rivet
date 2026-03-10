@@ -1,8 +1,8 @@
 use super::footer::SidebarFooter;
 use super::people_list::PeopleList;
-use super::rail::SpacesRail;
 use super::rooms_list::RoomsList;
 use super::{Sidebar, SidebarEvent};
+use crate::models::ui_preferences;
 use crate::theme::onedark::OneDarkThemeExt;
 use gpui::*;
 use gpui_component::scroll::ScrollableElement;
@@ -10,6 +10,8 @@ use gpui_component::scroll::ScrollableElement;
 impl Sidebar {
     fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.onedark_theme();
+        let show_sidecart = ui_preferences::ui_preferences(cx).show_sidecart;
+        let room_list_model = self.room_list_model.clone();
 
         div()
             .px_4()
@@ -19,13 +21,36 @@ impl Sidebar {
             .flex()
             .flex_col()
             .gap_1()
-            .child(
+            .child(if show_sidecart {
                 div()
                     .text_lg()
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.text)
-                    .child("Rivet"),
-            )
+                    .child("Rivet")
+                    .into_any_element()
+            } else {
+                div()
+                    .h(px(38.0))
+                    .w(px(154.0))
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .child(
+                        svg()
+                            .path("brand/horizontal.svg")
+                            .w_full()
+                            .h_full()
+                            .text_color(theme.accent),
+                    )
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        if let Some(room_list_model) = &room_list_model {
+                            room_list_model.update(cx, |model, cx| {
+                                model.select_home(cx);
+                            });
+                        }
+                    })
+                    .into_any_element()
+            })
             .child(
                 div()
                     .text_xs()
@@ -50,15 +75,15 @@ impl Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let rail = SpacesRail::new(self.room_list_model.clone());
         let header = self.render_header(cx);
         let content = self.render_content();
         let theme = cx.onedark_theme();
         let view = cx.entity().clone();
 
-        div().flex().h_full().child(rail).child(
+        div().size_full().flex().child(
             div()
-                .w_64()
+                .flex_1()
+                .min_w(px(220.0))
                 .h_full()
                 .flex()
                 .flex_col()

@@ -64,10 +64,12 @@ pub(crate) fn init(model: Entity<TimelineModel>, cx: &mut App) {
     let async_cx = cx.to_async();
     let weak_model = model.downgrade();
     let timeline = model.read(cx).timeline.clone();
+    let room = model.read(cx).room.clone();
 
     async_cx
         .clone()
         .spawn(move |_: &mut AsyncApp| async move {
+            let _ = room.sync_members().await;
             let (items, mut stream) = timeline.subscribe().await;
 
             let homeserver_url = async_cx
@@ -78,7 +80,7 @@ pub(crate) fn init(model: Entity<TimelineModel>, cx: &mut App) {
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();
-            let processed = formatting::process_items_vector(&items, &homeserver_url).await;
+            let processed = formatting::process_items_vector(&room, &items, &homeserver_url).await;
 
             let _ = async_cx.update(|cx: &mut App| {
                 let _ = weak_model.update(cx, |this, cx: &mut Context<TimelineModel>| {
@@ -169,7 +171,7 @@ pub(crate) fn init(model: Entity<TimelineModel>, cx: &mut App) {
                     })
                     .unwrap_or_default();
                 let processed =
-                    formatting::process_items_vector(&current_items, &homeserver_url).await;
+                    formatting::process_items_vector(&room, &current_items, &homeserver_url).await;
                 let items_to_save = current_items;
 
                 let _ = async_cx.update(|cx: &mut App| {

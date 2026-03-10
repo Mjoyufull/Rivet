@@ -12,6 +12,7 @@ use crate::timeline::ChatStyle;
 use gpui::*;
 use gpui_component::input::InputState;
 use gpui_component::slider::{SliderEvent, SliderState, SliderValue};
+use std::time::Duration;
 
 pub use events::SettingsEvent;
 use tabs::SettingsTab;
@@ -20,6 +21,11 @@ pub struct SettingsView {
     active_tab: SettingsTab,
     focus_handle: FocusHandle,
     show_rooms_in_home: bool,
+    show_sidecart: bool,
+    show_other_rooms: bool,
+    remember_last_room: bool,
+    show_home_rooms_suggestion: bool,
+    home_rooms_suggestion_generation: usize,
     session_verified: bool,
     chat_style: ChatStyle,
     image_radius: Pixels,
@@ -92,6 +98,11 @@ impl SettingsView {
             active_tab: SettingsTab::default(),
             focus_handle: cx.focus_handle(),
             show_rooms_in_home: false,
+            show_sidecart: true,
+            show_other_rooms: true,
+            remember_last_room: false,
+            show_home_rooms_suggestion: false,
+            home_rooms_suggestion_generation: 0,
             session_verified: false,
             chat_style: ChatStyle::default(),
             image_radius,
@@ -112,8 +123,63 @@ impl SettingsView {
         cx.notify();
     }
 
+    pub fn sync_navigation_preferences(
+        &mut self,
+        show_rooms_in_home: bool,
+        show_sidecart: bool,
+        show_other_rooms: bool,
+        remember_last_room: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_rooms_in_home = show_rooms_in_home;
+        self.show_sidecart = show_sidecart;
+        self.show_other_rooms = show_other_rooms;
+        self.remember_last_room = remember_last_room;
+        self.show_home_rooms_suggestion = false;
+        self.home_rooms_suggestion_generation += 1;
+        cx.notify();
+    }
+
     pub fn set_show_rooms_in_home(&mut self, val: bool, cx: &mut Context<Self>) {
         self.show_rooms_in_home = val;
+        if val {
+            self.show_home_rooms_suggestion = false;
+            self.home_rooms_suggestion_generation += 1;
+        }
+        cx.notify();
+    }
+
+    pub fn set_show_sidecart(&mut self, val: bool, cx: &mut Context<Self>) {
+        self.show_sidecart = val;
+        if !val && !self.show_rooms_in_home {
+            self.show_home_rooms_suggestion = true;
+            self.home_rooms_suggestion_generation += 1;
+            let generation = self.home_rooms_suggestion_generation;
+            let view = cx.entity().clone();
+            cx.spawn(async move |_this: WeakEntity<Self>, cx| {
+                cx.background_executor().timer(Duration::from_secs(5)).await;
+                let _ = view.update(cx, |this, cx| {
+                    if this.home_rooms_suggestion_generation == generation {
+                        this.show_home_rooms_suggestion = false;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        } else {
+            self.show_home_rooms_suggestion = false;
+            self.home_rooms_suggestion_generation += 1;
+        }
+        cx.notify();
+    }
+
+    pub fn set_show_other_rooms(&mut self, val: bool, cx: &mut Context<Self>) {
+        self.show_other_rooms = val;
+        cx.notify();
+    }
+
+    pub fn set_remember_last_room(&mut self, val: bool, cx: &mut Context<Self>) {
+        self.remember_last_room = val;
         cx.notify();
     }
 

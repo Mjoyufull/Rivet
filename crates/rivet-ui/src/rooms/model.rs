@@ -2,9 +2,11 @@ mod enrichment;
 mod stream;
 
 use super::hierarchy::derive_room_lists;
+use crate::models::ui_preferences;
 use gpui::*;
 use matrix_sdk_ui::eyeball_im::{Vector, VectorDiff};
 use rivet_core::client::RivetClient;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum RailSelection {
@@ -14,7 +16,7 @@ pub enum RailSelection {
     Space(String),
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct RoomInfo {
     pub id: String,
     pub name: String,
@@ -37,6 +39,10 @@ pub struct RoomListModel {
     pub selected_room_id: Option<String>,
     pub rail_selection: RailSelection,
     pub show_rooms_in_home: bool,
+    pub show_other_rooms: bool,
+    pub remember_last_room: bool,
+    last_rooms_room_id: Option<String>,
+    last_space_room_ids: HashMap<String, String>,
     _room_list_controller:
         Option<matrix_sdk_ui::room_list_service::RoomListDynamicEntriesController>,
 }
@@ -45,6 +51,7 @@ impl EventEmitter<()> for RoomListModel {}
 
 impl RoomListModel {
     pub fn new(cx: &mut App) -> Entity<Self> {
+        let preferences = ui_preferences::ui_preferences(cx);
         cx.new(|_| Self {
             rooms: Vec::new(),
             people: Vec::new(),
@@ -53,38 +60,76 @@ impl RoomListModel {
             is_loading: true,
             selected_room_id: None,
             rail_selection: RailSelection::Home,
-            show_rooms_in_home: false,
+            show_rooms_in_home: preferences.show_rooms_in_home,
+            show_other_rooms: preferences.show_other_rooms,
+            remember_last_room: preferences.remember_last_room,
+            last_rooms_room_id: None,
+            last_space_room_ids: HashMap::new(),
             _room_list_controller: None,
         })
     }
 
     pub fn select_room(&mut self, room_id: String, cx: &mut Context<Self>) {
         if self.selected_room_id.as_ref() != Some(&room_id) {
+            match &self.rail_selection {
+                RailSelection::Rooms => self.last_rooms_room_id = Some(room_id.clone()),
+                RailSelection::Space(space_id) => {
+                    self.last_space_room_ids
+                        .insert(space_id.clone(), room_id.clone());
+                }
+                RailSelection::Home => {}
+            }
             self.selected_room_id = Some(room_id);
             cx.notify();
         }
     }
 
+    pub fn clear_selected_room(&mut self, cx: &mut Context<Self>) {
+        if self.selected_room_id.take().is_some() {
+            cx.notify();
+        }
+    }
+
     pub fn select_home(&mut self, cx: &mut Context<Self>) {
+        let mut changed = false;
         if self.rail_selection != RailSelection::Home {
             self.rail_selection = RailSelection::Home;
             self.recalculate_derived_lists();
+            changed = true;
+        }
+        if self.selected_room_id.take().is_some() {
+            changed = true;
+        }
+        if changed {
             cx.notify();
         }
     }
 
     pub fn select_rooms(&mut self, cx: &mut Context<Self>) {
+        if !self.show_other_rooms {
+            return;
+        }
+
         if self.rail_selection != RailSelection::Rooms {
             self.rail_selection = RailSelection::Rooms;
             self.recalculate_derived_lists();
+            self.restore_last_room_for_current_selection(cx);
+        } else if self.remember_last_room {
+            self.restore_last_room_for_current_selection(cx);
+        } else if self.selected_room_id.take().is_some() {
             cx.notify();
         }
     }
 
     pub fn select_space(&mut self, space_id: String, cx: &mut Context<Self>) {
-        if self.rail_selection != RailSelection::Space(space_id.clone()) {
-            self.rail_selection = RailSelection::Space(space_id);
+        let target = RailSelection::Space(space_id);
+        if self.rail_selection != target {
+            self.rail_selection = target;
             self.recalculate_derived_lists();
+            self.restore_last_room_for_current_selection(cx);
+        } else if self.remember_last_room {
+            self.restore_last_room_for_current_selection(cx);
+        } else if self.selected_room_id.take().is_some() {
             cx.notify();
         }
     }
@@ -92,7 +137,60 @@ impl RoomListModel {
     pub fn set_show_rooms_in_home(&mut self, val: bool, cx: &mut Context<Self>) {
         if self.show_rooms_in_home != val {
             self.show_rooms_in_home = val;
+            ui_preferences::set_show_rooms_in_home(val, cx);
             self.recalculate_derived_lists();
+            cx.notify();
+        }
+    }
+
+    pub fn set_show_other_rooms(&mut self, val: bool, cx: &mut Context<Self>) {
+        if self.show_other_rooms != val {
+            self.show_other_rooms = val;
+            ui_preferences::set_show_other_rooms(val, cx);
+            if !val && matches!(self.rail_selection, RailSelection::Rooms) {
+                self.rail_selection = RailSelection::Home;
+            }
+            self.recalculate_derived_lists();
+            cx.notify();
+        }
+    }
+
+    pub fn set_remember_last_room(&mut self, val: bool, cx: &mut Context<Self>) {
+        if self.remember_last_room != val {
+            self.remember_last_room = val;
+            ui_preferences::set_remember_last_room(val, cx);
+            if !val {
+                self.last_rooms_room_id = None;
+                self.last_space_room_ids.clear();
+            }
+            cx.notify();
+        }
+    }
+
+    fn restore_last_room_for_current_selection(&mut self, cx: &mut Context<Self>) {
+        if !self.remember_last_room {
+            self.selected_room_id = None;
+            cx.notify();
+            return;
+        }
+
+        let candidate = match &self.rail_selection {
+            RailSelection::Rooms => self.last_rooms_room_id.clone(),
+            RailSelection::Space(space_id) => self.last_space_room_ids.get(space_id).cloned(),
+            RailSelection::Home => None,
+        };
+
+        if let Some(room_id) = candidate {
+            if self.rooms.iter().any(|room| room.id == room_id) {
+                self.selected_room_id = Some(room_id);
+                cx.notify();
+                return;
+            }
+        }
+
+        if self.selected_room_id.take().is_some()
+            || !matches!(self.rail_selection, RailSelection::Home)
+        {
             cx.notify();
         }
     }

@@ -8,6 +8,8 @@ use crate::rooms::RoomListModel;
 use gpui::*;
 use rivet_core::client::RivetClient;
 
+pub(crate) use rail::SpacesRail;
+
 pub enum SidebarEvent {
     OpenSettings,
 }

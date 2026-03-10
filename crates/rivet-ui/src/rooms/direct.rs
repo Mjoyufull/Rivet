@@ -18,27 +18,24 @@ pub async fn resolve_direct_room_profile(room: &MatrixRoom) -> Option<DirectRoom
         .map(|target| target.to_string())
         .collect::<HashSet<_>>();
 
-    let counterpart = if let Some(member) = room
-        .members_no_sync(RoomMemberships::ACTIVE)
-        .await
-        .ok()
-        .as_deref()
-        .and_then(|members| select_direct_counterpart(members, &own_user_id, &direct_targets))
-        .cloned()
-    {
-        member
+    let memberships = RoomMemberships::ACTIVE;
+    let local_members = room.members_no_sync(memberships).await.ok();
+    let members = if room.are_members_synced() {
+        local_members.unwrap_or_default()
     } else {
-        room.members(RoomMemberships::ACTIVE)
+        let _ = room.sync_members().await;
+        room.members(memberships)
             .await
             .ok()
-            .and_then(|members| {
-                select_direct_counterpart(&members, &own_user_id, &direct_targets).cloned()
-            })?
+            .or(local_members)
+            .unwrap_or_default()
     };
+
+    let counterpart = select_direct_counterpart(&members, &own_user_id, &direct_targets)?;
 
     Some(DirectRoomProfile {
         user_id: counterpart.user_id().to_string(),
-        display_name: member_display_name(&counterpart),
+        display_name: member_display_name(counterpart),
         avatar_url: counterpart.avatar_url().map(|url| url.to_string()),
     })
 }

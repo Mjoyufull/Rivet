@@ -129,7 +129,7 @@ fn timeline_item_id(
         .unwrap_or_else(|| item.unique_id().0.clone())
 }
 
-fn format_message_timestamp(timestamp: DateTime<Local>, now: DateTime<Local>) -> String {
+pub fn format_message_timestamp(timestamp: DateTime<Local>, now: DateTime<Local>) -> String {
     let today = now.date_naive();
     let message_day = timestamp.date_naive();
 
@@ -145,8 +145,8 @@ fn format_message_timestamp(timestamp: DateTime<Local>, now: DateTime<Local>) ->
     }
 }
 
-fn format_date_divider(timestamp: DateTime<Local>) -> String {
-    let today = Local::now().date_naive();
+pub fn format_date_divider_at(timestamp: DateTime<Local>, now: DateTime<Local>) -> String {
+    let today = now.date_naive();
     let message_day = timestamp.date_naive();
 
     if message_day == today {
@@ -159,6 +159,10 @@ fn format_date_divider(timestamp: DateTime<Local>) -> String {
     } else {
         timestamp.format("%B %-d, %Y").to_string()
     }
+}
+
+pub fn format_date_divider(timestamp: DateTime<Local>) -> String {
+    format_date_divider_at(timestamp, Local::now())
 }
 
 fn should_use_rich_text(body: &str) -> bool {
@@ -253,7 +257,7 @@ fn format_membership_change(
         | MembershipChange::Invited
         | MembershipChange::InvitationAccepted
         | MembershipChange::Knocked
-        | MembershipChange::KnockAccepted => Some("icons/log-in.svg".to_string()),
+        | MembershipChange::KnockAccepted => Some("icons/arrow-right-to-line.svg".to_string()),
         MembershipChange::Left
         | MembershipChange::Banned
         | MembershipChange::KickedAndBanned
@@ -261,7 +265,7 @@ fn format_membership_change(
         | MembershipChange::InvitationRejected
         | MembershipChange::InvitationRevoked
         | MembershipChange::KnockRetracted
-        | MembershipChange::KnockDenied => Some("icons/log-out.svg".to_string()),
+        | MembershipChange::KnockDenied => Some("icons/arrow-left-from-line.svg".to_string()),
         _ => None,
     };
 
@@ -305,33 +309,57 @@ fn format_profile_change(
     profile_change: &MemberProfileChange,
     sender_name: &str,
 ) -> (String, Option<String>) {
-    let content = if let Some(displayname) = profile_change.displayname_change() {
+    let (content, icon) = if let Some(displayname) = profile_change.displayname_change() {
         if let Some(previous_name) = &displayname.old {
             if let Some(new_name) = &displayname.new {
-                format!("{previous_name} changed their display name to {new_name}.")
+                (
+                    format!("{previous_name} changed their display name to {new_name}."),
+                    Some("icons/user-round-pen.svg".to_string()),
+                )
             } else {
-                format!("{previous_name} removed their display name.")
+                (
+                    format!("{previous_name} removed their display name."),
+                    Some("icons/user-round-pen.svg".to_string()),
+                )
             }
         } else if let Some(new_name) = &displayname.new {
-            format!(
-                "{} set their display name to {new_name}.",
-                fallback_sender_name(profile_change.user_id().as_str())
+            (
+                format!(
+                    "{} set their display name to {new_name}.",
+                    fallback_sender_name(profile_change.user_id().as_str())
+                ),
+                Some("icons/user-round-pen.svg".to_string()),
             )
         } else {
-            format!("{sender_name} updated their profile.")
+            (
+                format!("{sender_name} updated their profile."),
+                Some("icons/user-round.svg".to_string()),
+            )
         }
     } else if let Some(avatar_url) = profile_change.avatar_url_change() {
         if avatar_url.old.is_none() {
-            format!("{sender_name} set their avatar.")
+            (
+                format!("{sender_name} set their avatar."),
+                Some("icons/image.svg".to_string()),
+            )
         } else if avatar_url.new.is_none() {
-            format!("{sender_name} removed their avatar.")
+            (
+                format!("{sender_name} removed their avatar."),
+                Some("icons/image.svg".to_string()),
+            )
         } else {
-            format!("{sender_name} changed their avatar.")
+            (
+                format!("{sender_name} changed their avatar."),
+                Some("icons/image.svg".to_string()),
+            )
         }
     } else {
-        format!("{sender_name} updated their profile.")
+        (
+            format!("{sender_name} updated their profile."),
+            Some("icons/user-round.svg".to_string()),
+        )
     };
-    (content, None)
+    (content, icon)
 }
 
 fn format_other_state(
@@ -341,68 +369,82 @@ fn format_other_state(
     let (content, arrow) = match other_state.content() {
         AnyOtherFullStateEventContent::RoomCreate(_) => (
             format!("{sender_name} created the room."),
-            Some("icons/log-in.svg".to_string()),
+            Some("icons/hash.svg".to_string()),
         ),
         AnyOtherFullStateEventContent::RoomEncryption(_) => (
             "This room is encrypted from this point on.".to_string(),
-            None,
+            Some("icons/lock.svg".to_string()),
         ),
-        AnyOtherFullStateEventContent::RoomName(_) => {
-            (format!("{sender_name} changed the room name."), None)
-        }
-        AnyOtherFullStateEventContent::RoomTopic(_) => {
-            (format!("{sender_name} changed the room topic."), None)
-        }
-        AnyOtherFullStateEventContent::RoomAvatar(_) => {
-            (format!("{sender_name} changed the room avatar."), None)
-        }
-        AnyOtherFullStateEventContent::RoomAliases(_) => {
-            (format!("{sender_name} updated the room aliases."), None)
-        }
-        AnyOtherFullStateEventContent::RoomCanonicalAlias(_) => {
-            (format!("{sender_name} changed the room alias."), None)
-        }
-        AnyOtherFullStateEventContent::RoomGuestAccess(_) => {
-            (format!("{sender_name} changed guest access."), None)
-        }
-        AnyOtherFullStateEventContent::RoomHistoryVisibility(_) => {
-            (format!("{sender_name} changed history visibility."), None)
-        }
-        AnyOtherFullStateEventContent::RoomJoinRules(_) => {
-            (format!("{sender_name} changed join rules."), None)
-        }
-        AnyOtherFullStateEventContent::RoomPinnedEvents(_) => {
-            (format!("{sender_name} updated pinned messages."), None)
-        }
-        AnyOtherFullStateEventContent::RoomPowerLevels(_) => {
-            (format!("{sender_name} updated room permissions."), None)
-        }
-        AnyOtherFullStateEventContent::RoomServerAcl(_) => {
-            (format!("{sender_name} updated the server ACL."), None)
-        }
-        AnyOtherFullStateEventContent::RoomThirdPartyInvite(_) => {
-            (format!("{sender_name} created a third-party invite."), None)
-        }
+        AnyOtherFullStateEventContent::RoomName(_) => (
+            format!("{sender_name} changed the room name."),
+            Some("icons/hash.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomTopic(_) => (
+            format!("{sender_name} changed the room topic."),
+            Some("icons/message-square.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomAvatar(_) => (
+            format!("{sender_name} changed the room avatar."),
+            Some("icons/image.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomAliases(_) => (
+            format!("{sender_name} updated the room aliases."),
+            Some("icons/hash.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomCanonicalAlias(_) => (
+            format!("{sender_name} changed the room alias."),
+            Some("icons/hash.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomGuestAccess(_) => (
+            format!("{sender_name} changed guest access."),
+            Some("icons/globe.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomHistoryVisibility(_) => (
+            format!("{sender_name} changed history visibility."),
+            Some("icons/book-open.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomJoinRules(_) => (
+            format!("{sender_name} changed join rules."),
+            Some("icons/users.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomPinnedEvents(_) => (
+            format!("{sender_name} updated pinned messages."),
+            Some("icons/pin.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomPowerLevels(_) => (
+            format!("{sender_name} updated room permissions."),
+            Some("icons/shield.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomServerAcl(_) => (
+            format!("{sender_name} updated the server ACL."),
+            Some("icons/shield.svg".to_string()),
+        ),
+        AnyOtherFullStateEventContent::RoomThirdPartyInvite(_) => (
+            format!("{sender_name} created a third-party invite."),
+            Some("icons/user-plus.svg".to_string()),
+        ),
         AnyOtherFullStateEventContent::RoomTombstone(_) => (
             "This room has been replaced with a newer room.".to_string(),
-            None,
+            Some("icons/badge-info.svg".to_string()),
         ),
         AnyOtherFullStateEventContent::SpaceChild(_)
-        | AnyOtherFullStateEventContent::SpaceParent(_) => {
-            (format!("{sender_name} updated the space hierarchy."), None)
-        }
+        | AnyOtherFullStateEventContent::SpaceParent(_) => (
+            format!("{sender_name} updated the space hierarchy."),
+            Some("icons/users.svg".to_string()),
+        ),
         AnyOtherFullStateEventContent::PolicyRuleRoom(_)
         | AnyOtherFullStateEventContent::PolicyRuleServer(_)
-        | AnyOtherFullStateEventContent::PolicyRuleUser(_) => {
-            (format!("{sender_name} updated a room policy."), None)
-        }
+        | AnyOtherFullStateEventContent::PolicyRuleUser(_) => (
+            format!("{sender_name} updated a room policy."),
+            Some("icons/shield.svg".to_string()),
+        ),
         AnyOtherFullStateEventContent::_Custom { event_type } => {
             if event_type == "org.matrix.msc3401.call.member" {
                 return None;
             }
             (
                 format!("{sender_name} sent a state event: {event_type}."),
-                None,
+                Some("icons/badge-info.svg".to_string()),
             )
         }
     };

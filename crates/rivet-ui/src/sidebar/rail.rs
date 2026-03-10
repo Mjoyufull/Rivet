@@ -3,6 +3,7 @@ use crate::models::appearance::avatar_radius_for;
 use crate::rooms::{RailSelection, RoomListModel};
 use crate::theme::onedark::OneDarkThemeExt;
 use gpui::StatefulInteractiveElement;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::StyledExt;
 use gpui_component::scroll::ScrollableElement;
@@ -40,6 +41,11 @@ impl RenderOnce for SpacesRail {
             .as_ref()
             .map(|m| matches!(m.read(cx).rail_selection, RailSelection::Rooms))
             .unwrap_or(false);
+        let show_other_rooms = self
+            .model
+            .as_ref()
+            .map(|m| m.read(cx).show_other_rooms)
+            .unwrap_or(true);
 
         let model_entity_home = self.model.clone();
         let model_entity_rooms = self.model.clone();
@@ -47,6 +53,7 @@ impl RenderOnce for SpacesRail {
         div()
             .w_16()
             .h_full()
+            .flex_shrink_0()
             .bg(theme.border)
             .flex()
             .flex_col()
@@ -81,7 +88,7 @@ impl RenderOnce for SpacesRail {
                             .border_color(theme.accent.opacity(0.8))
                     })
                     .tooltip(|window, cx| Tooltip::new("Home").build(window, cx))
-                    .child(svg().path("brand/icon.svg").size(rems(2.0)).text_color(
+                    .child(svg().path("brand/icon.svg").size(rems(2.4)).text_color(
                         if is_home_active {
                             theme.sidebar_background
                         } else {
@@ -98,54 +105,56 @@ impl RenderOnce for SpacesRail {
                     }),
             )
             .child(div().w_8().h_px().bg(theme.sidebar_item_hover))
-            .child(
-                div()
-                    .id("space-rooms")
-                    .w_11()
-                    .h_11()
-                    .bg(if is_rooms_active {
-                        theme.accent
-                    } else {
-                        theme.sidebar_item_active
-                    })
-                    .corner_radii(Corners::all(avatar_radius_for(px(44.0), cx)))
-                    .overflow_hidden()
-                    .border(px(2.0))
-                    .border_color(if is_rooms_active {
-                        theme.accent
-                    } else {
-                        gpui::transparent_black()
-                    })
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .hover(|s| {
-                        s.corner_radii(Corners::all(avatar_radius_for(px(44.0), cx)))
-                            .bg(theme.accent)
-                            .border_color(theme.accent.opacity(0.8))
-                    })
-                    .tooltip(|window, cx| Tooltip::new("Rooms").build(window, cx))
-                    .child(
-                        div()
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(if is_rooms_active {
-                                theme.sidebar_background
-                            } else {
-                                theme.text
-                            })
-                            .child("#"),
-                    )
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        cx.stop_propagation();
-                        if let Some(m) = &model_entity_rooms {
-                            m.update(cx, |this, cx| {
-                                this.select_rooms(cx);
-                            });
-                        }
-                    }),
-            )
+            .when(show_other_rooms, |this: Div| {
+                this.child(
+                    div()
+                        .id("space-rooms")
+                        .w_11()
+                        .h_11()
+                        .bg(if is_rooms_active {
+                            theme.accent
+                        } else {
+                            theme.sidebar_item_active
+                        })
+                        .corner_radii(Corners::all(avatar_radius_for(px(44.0), cx)))
+                        .overflow_hidden()
+                        .border(px(2.0))
+                        .border_color(if is_rooms_active {
+                            theme.accent
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .cursor_pointer()
+                        .hover(|s| {
+                            s.corner_radii(Corners::all(avatar_radius_for(px(44.0), cx)))
+                                .bg(theme.accent)
+                                .border_color(theme.accent.opacity(0.8))
+                        })
+                        .tooltip(|window, cx| Tooltip::new("Other Rooms").build(window, cx))
+                        .child(
+                            div()
+                                .text_xl()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(if is_rooms_active {
+                                    theme.sidebar_background
+                                } else {
+                                    theme.text
+                                })
+                                .child("#"),
+                        )
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(m) = &model_entity_rooms {
+                                m.update(cx, |this, cx| {
+                                    this.select_rooms(cx);
+                                });
+                            }
+                        }),
+                )
+            })
             .child(div().flex_1().overflow_y_scrollbar().child(
                 div().flex().flex_col().items_center().gap_2().children(
                     if let Some(model_entity) = &self.model {

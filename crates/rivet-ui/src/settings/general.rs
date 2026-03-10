@@ -13,8 +13,32 @@ impl SettingsView {
         let view = cx.entity().clone();
         let view_for_verify = view.clone();
         let show_rooms = self.show_rooms_in_home;
+        let show_sidecart = self.show_sidecart;
+        let show_other_rooms = self.show_other_rooms;
+        let remember_last_room = self.remember_last_room;
         let card_radius = self.element_radius;
         let inner_card_radius = px((f32::from(card_radius) - 1.0).max(0.0));
+        let toggle_knob = |enabled: bool| {
+            div()
+                .w_10()
+                .h_5()
+                .rounded_full()
+                .bg(if enabled {
+                    theme.accent
+                } else {
+                    theme.sidebar_item_active
+                })
+                .flex()
+                .items_center()
+                .p_0p5()
+                .child(
+                    div()
+                        .size_4()
+                        .rounded_full()
+                        .bg(theme.text)
+                        .when(enabled, |el| el.ml_auto()),
+                )
+        };
 
         div()
             .flex()
@@ -50,47 +74,210 @@ impl SettingsView {
                             .child(
                                 div()
                                     .flex()
-                                    .items_center()
-                                    .gap_2()
+                                    .items_start()
+                                    .justify_between()
+                                    .gap_3()
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(theme.sidebar_item_hover.opacity(0.45)))
+                                    .corner_radii(Corners::all(inner_card_radius))
+                                    .px_2()
+                                    .py_2()
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let view = view.clone();
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                let next = !show_sidecart;
+                                                this.set_show_sidecart(next, cx);
+                                                cx.emit(SettingsEvent::SetShowSidecart(next));
+                                            });
+                                        }
+                                    })
                                     .child(
                                         div()
-                                            .w_10()
-                                            .h_5()
-                                            .rounded_full()
-                                            .bg(if show_rooms {
-                                                theme.accent
-                                            } else {
-                                                theme.sidebar_item_active
-                                            })
+                                            .flex_1()
                                             .flex()
-                                            .items_center()
-                                            .p_0p5()
-                                            .cursor_pointer()
-                                            .on_mouse_down(MouseButton::Left, {
-                                                let view = view.clone();
-                                                move |_, _, cx| {
-                                                    view.update(cx, |this, cx| {
-                                                        this.show_rooms_in_home = !show_rooms;
-                                                        cx.emit(SettingsEvent::SetShowRoomsInHome(
-                                                            !show_rooms,
-                                                        ));
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            })
+                                            .flex_col()
+                                            .gap_1()
                                             .child(
                                                 div()
-                                                    .size_4()
-                                                    .rounded_full()
-                                                    .bg(theme.text)
-                                                    .when(show_rooms, |el| el.ml_auto()),
+                                                    .text_color(theme.text)
+                                                    .child("Show sidecart"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.text_muted)
+                                                    .child(
+                                                        "Keep the space rail visible on the far left.",
+                                                    ),
                                             ),
                                     )
+                                    .child(toggle_knob(show_sidecart)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_start()
+                                    .justify_between()
+                                    .gap_3()
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(theme.sidebar_item_hover.opacity(0.45)))
+                                    .corner_radii(Corners::all(inner_card_radius))
+                                    .px_2()
+                                    .py_2()
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let view = view.clone();
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                let next = !show_rooms;
+                                                this.set_show_rooms_in_home(next, cx);
+                                                cx.emit(SettingsEvent::SetShowRoomsInHome(next));
+                                            });
+                                        }
+                                    })
                                     .child(
                                         div()
-                                            .text_color(theme.text)
-                                            .child("Show rooms alongside direct messages in Home"),
-                                    ),
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_color(theme.text)
+                                                    .child("Show rooms alongside direct messages in Home"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.text_muted)
+                                                    .child("Mix regular rooms into the Home view."),
+                                            ),
+                                    )
+                                    .child(toggle_knob(show_rooms)),
+                            )
+                            .when(self.show_home_rooms_suggestion, |this| {
+                                let view = view.clone();
+                                this.child(
+                                    div()
+                                        .px_3()
+                                        .py_2()
+                                        .corner_radii(Corners::all(inner_card_radius))
+                                        .bg(theme.sidebar_item_hover)
+                                        .border(px(1.0))
+                                        .border_color(theme.accent.opacity(0.35))
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .text_sm()
+                                                .text_color(theme.text)
+                                                .child(
+                                                    "With the sidecart hidden, enabling rooms in Home makes navigation simpler.",
+                                                ),
+                                        )
+                                        .child(
+                                            Button::new("enable-home-rooms-suggestion")
+                                                .label("Enable")
+                                                .ghost()
+                                                .on_click(move |_, _, cx| {
+                                                    view.update(cx, |this, cx| {
+                                                        this.set_show_rooms_in_home(true, cx);
+                                                        cx.emit(SettingsEvent::SetShowRoomsInHome(
+                                                            true,
+                                                        ));
+                                                    });
+                                                }),
+                                        ),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_start()
+                                    .justify_between()
+                                    .gap_3()
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(theme.sidebar_item_hover.opacity(0.45)))
+                                    .corner_radii(Corners::all(inner_card_radius))
+                                    .px_2()
+                                    .py_2()
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let view = view.clone();
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                let next = !show_other_rooms;
+                                                this.set_show_other_rooms(next, cx);
+                                                cx.emit(SettingsEvent::SetShowOtherRooms(next));
+                                            });
+                                        }
+                                    })
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_color(theme.text)
+                                                    .child("Show Other Rooms section"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.text_muted)
+                                                    .child(
+                                                        "Expose the dedicated rail button and section for rooms outside spaces.",
+                                                    ),
+                                            ),
+                                    )
+                                    .child(toggle_knob(show_other_rooms)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_start()
+                                    .justify_between()
+                                    .gap_3()
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(theme.sidebar_item_hover.opacity(0.45)))
+                                    .corner_radii(Corners::all(inner_card_radius))
+                                    .px_2()
+                                    .py_2()
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let view = view.clone();
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                let next = !remember_last_room;
+                                                this.set_remember_last_room(next, cx);
+                                                cx.emit(SettingsEvent::SetRememberLastRoom(next));
+                                            });
+                                        }
+                                    })
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_color(theme.text)
+                                                    .child("Remember last room in spaces and Other Rooms"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.text_muted)
+                                                    .child(
+                                                        "Return to the last open room when switching spaces or the Other Rooms view.",
+                                                    ),
+                                            ),
+                                    )
+                                    .child(toggle_knob(remember_last_room)),
                             ),
                     ),
             )

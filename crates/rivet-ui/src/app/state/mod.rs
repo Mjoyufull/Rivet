@@ -4,7 +4,7 @@ mod session;
 mod settings;
 
 use crate::auth::LoginView;
-use crate::components::chat::ChatView;
+use crate::components::chat::{ChatView, DetailsPanelPreferences};
 use crate::rooms::RoomListModel;
 use crate::security::verification::VerificationModel;
 use crate::settings::SettingsView;
@@ -23,11 +23,13 @@ pub(crate) struct AppView {
     pub(crate) room_list_model: Option<Entity<RoomListModel>>,
     pub(crate) active_timeline_model: Option<Entity<TimelineModel>>,
     active_chat_view: Option<Entity<ChatView>>,
+    pub(crate) details_panel_preferences: DetailsPanelPreferences,
     verification_model: Option<Entity<VerificationModel>>,
     verification_gate_active: bool,
     active_room_id: Option<String>,
     sync_status: String,
     session_verified: bool,
+    pub(crate) sidebar_width: Pixels,
     is_recovering: bool,
     recovery_status: Option<Result<(), String>>,
 }
@@ -48,11 +50,13 @@ impl AppView {
             room_list_model: None,
             active_timeline_model: None,
             active_chat_view: None,
+            details_panel_preferences: DetailsPanelPreferences::default(),
             verification_model: None,
             verification_gate_active: false,
             active_room_id: None,
             sync_status: "Idle".to_string(),
             session_verified: false,
+            sidebar_width: px(268.0),
             is_recovering: false,
             recovery_status: None,
         }

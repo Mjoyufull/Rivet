@@ -1,14 +1,36 @@
 use super::AppView;
+use crate::models::ui_preferences;
 use gpui::AsyncApp;
 use gpui::*;
 use rivet_core::client::RivetClient;
 
 impl AppView {
     pub(crate) fn open_settings(&mut self, cx: &mut Context<Self>) {
+        let preferences = ui_preferences::ui_preferences(cx);
         if let Some(room_model) = &self.room_list_model {
-            let show_rooms = room_model.read(cx).show_rooms_in_home;
+            let room_model = room_model.read(cx);
+            let show_rooms_in_home = room_model.show_rooms_in_home;
+            let show_other_rooms = room_model.show_other_rooms;
+            let remember_last_room = room_model.remember_last_room;
             self.settings_view.update(cx, |settings, cx| {
-                settings.set_show_rooms_in_home(show_rooms, cx);
+                settings.sync_navigation_preferences(
+                    show_rooms_in_home,
+                    preferences.show_sidecart,
+                    show_other_rooms,
+                    remember_last_room,
+                    cx,
+                );
+                settings.set_session_verified(self.session_verified, cx);
+            });
+        } else {
+            self.settings_view.update(cx, |settings, cx| {
+                settings.sync_navigation_preferences(
+                    preferences.show_rooms_in_home,
+                    preferences.show_sidecart,
+                    preferences.show_other_rooms,
+                    preferences.remember_last_room,
+                    cx,
+                );
                 settings.set_session_verified(self.session_verified, cx);
             });
         }

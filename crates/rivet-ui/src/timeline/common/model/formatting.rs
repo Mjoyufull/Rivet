@@ -1,4 +1,6 @@
 use super::*;
+use matrix_sdk::RoomMemberships;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 struct PendingCallEntry {
@@ -46,9 +48,26 @@ fn flush_call_group(
 }
 
 pub(crate) async fn process_items_vector(
+    room: &MatrixRoom,
     items: &Vector<Arc<TimelineItem>>,
     _homeserver_url: &str,
 ) -> Vector<RenderedTimelineItem> {
+    let member_lookup = room
+        .members_no_sync(RoomMemberships::ACTIVE)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|member| {
+            let user_id = member.user_id().to_string();
+            let display_name = member
+                .display_name()
+                .filter(|name| !name.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| fallback_sender_name(&user_id));
+            let avatar_url = member.avatar_url().map(|url| url.to_string());
+            (user_id, (display_name, avatar_url))
+        })
+        .collect::<HashMap<_, _>>();
     tracing::info!("timeline: processing {} raw items", items.len());
     let mut rendered = Vector::new();
     let now = Local::now();
@@ -92,17 +111,25 @@ pub(crate) async fn process_items_vector(
         let minute_bucket = dt.timestamp() / 60;
         let fallback_sender_name = fallback_sender_name(&sender_id);
 
+        let member_profile = member_lookup.get(&sender_id);
         let (sender_name, avatar_url) = match event.sender_profile() {
             TimelineDetails::Ready(profile) => {
                 let name = profile
                     .display_name
                     .clone()
                     .filter(|name| !name.trim().is_empty())
+                    .or_else(|| member_profile.map(|(name, _)| name.clone()))
                     .unwrap_or_else(|| fallback_sender_name.clone());
-                let avatar = profile.avatar_url.as_ref().map(|mxc| mxc.to_string());
+                let avatar = profile
+                    .avatar_url
+                    .as_ref()
+                    .map(|mxc| mxc.to_string())
+                    .or_else(|| member_profile.and_then(|(_, avatar)| avatar.clone()));
                 (name, avatar)
             }
-            _ => (fallback_sender_name, None),
+            _ => member_profile
+                .map(|(name, avatar)| (name.clone(), avatar.clone()))
+                .unwrap_or((fallback_sender_name, None)),
         };
 
         let is_grouped =
@@ -235,7 +262,7 @@ pub(crate) async fn process_items_vector(
                     id,
                     content: server_notice.body.clone(),
                     timestamp: formatted_timestamp.clone(),
-                    arrow: None,
+                    arrow: Some("icons/badge-info.svg".to_string()),
                 }),
                 _ => Some(RenderedTimelineItem::Message {
                     id,
@@ -336,7 +363,7 @@ pub(crate) async fn process_items_vector(
                             "{sender_name} sent an event we could not parse: {event_type}."
                         ),
                         timestamp: formatted_timestamp.clone(),
-                        arrow: None,
+                        arrow: Some("icons/triangle-alert.svg".to_string()),
                     })
                 }
                 TimelineItemContent::FailedToParseState { event_type, .. } => {
@@ -346,7 +373,7 @@ pub(crate) async fn process_items_vector(
                             "{sender_name} sent a state event we could not parse: {event_type}."
                         ),
                         timestamp: formatted_timestamp.clone(),
-                        arrow: None,
+                        arrow: Some("icons/triangle-alert.svg".to_string()),
                     })
                 }
                 TimelineItemContent::CallInvite => Some(RenderedTimelineItem::System {
@@ -384,7 +411,7 @@ pub(crate) async fn process_items_vector(
                         id,
                         content: format!("{sender_name} removed a message."),
                         timestamp: formatted_timestamp.clone(),
-                        arrow: None,
+                        arrow: Some("icons/eraser.svg".to_string()),
                     }),
                     MsgLikeKind::Other(other) => Some(RenderedTimelineItem::System {
                         id,
@@ -393,7 +420,7 @@ pub(crate) async fn process_items_vector(
                             other.event_type()
                         ),
                         timestamp: formatted_timestamp.clone(),
-                        arrow: None,
+                        arrow: Some("icons/badge-info.svg".to_string()),
                     }),
                     MsgLikeKind::Message(_)
                     | MsgLikeKind::Sticker(_)

@@ -176,18 +176,30 @@ pub(crate) fn render_system_row(
     icon_path: Option<&str>,
     theme: &OneDarkTheme,
 ) -> AnyElement {
-    let mut row = div().flex().items_start().gap_3().text_xs();
-
-    if let Some(path) = icon_path {
-        row = row.child(
-            div().flex_none().child(
-                gpui_component::Icon::empty()
-                    .path(path.to_string())
-                    .with_size(gpui_component::Size::Small)
-                    .text_color(theme.accent),
-            ),
+    let icon_slot = div()
+        .w(px(16.0))
+        .flex_none()
+        .flex()
+        .justify_center()
+        .pt(px(1.0))
+        .child(
+            icon_path
+                .map(|path| {
+                    gpui_component::Icon::empty()
+                        .path(path.to_string())
+                        .with_size(gpui_component::Size::Small)
+                        .text_color(theme.accent)
+                        .into_any_element()
+                })
+                .unwrap_or_else(|| div().w(px(16.0)).h(px(16.0)).into_any_element()),
         );
-    }
+
+    let mut row = div()
+        .flex()
+        .items_start()
+        .gap_3()
+        .text_xs()
+        .child(icon_slot);
 
     row = row
         .child(

@@ -2,18 +2,20 @@ use super::{RailSelection, RoomInfo};
 use matrix_sdk_ui::eyeball_im::Vector;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-pub(crate) struct DerivedRoomLists {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedRoomLists {
     pub rooms: Vec<RoomInfo>,
     pub people: Vec<RoomInfo>,
     pub spaces: Vec<RoomInfo>,
 }
 
-pub(crate) struct RoomSection {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomSection {
     pub heading: Option<String>,
     pub rooms: Vec<RoomInfo>,
 }
 
-pub(crate) fn derive_room_lists(
+pub fn derive_room_lists(
     all_rooms: &Vector<RoomInfo>,
     rail_selection: &RailSelection,
     show_rooms_in_home: bool,
@@ -145,14 +147,18 @@ pub(crate) fn derive_room_lists(
     }
 }
 
-pub(crate) fn build_room_sections(
+pub fn build_room_sections(
     rail_selection: &RailSelection,
     rooms: &[RoomInfo],
     all_rooms: &[RoomInfo],
 ) -> Vec<RoomSection> {
     let RailSelection::Space(selected_space_id) = rail_selection else {
+        let heading = match rail_selection {
+            RailSelection::Rooms => "OTHER ROOMS",
+            RailSelection::Home | RailSelection::Space(_) => "ROOMS",
+        };
         return vec![RoomSection {
-            heading: Some("ROOMS".to_string()),
+            heading: Some(heading.to_string()),
             rooms: rooms.to_vec(),
         }];
     };
