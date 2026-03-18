@@ -223,6 +223,7 @@ impl RenderOnce for SpacesRail {
                                         )
                                         .size(px(44.0))
                                         .avatar()
+                                        .low_priority()
                                         .fallback_text(fallback)
                                         .into_any_element()
                                     } else {

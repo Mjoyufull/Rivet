@@ -128,10 +128,10 @@ impl TimelineView {
                             return JumpStep::Done;
                         }
 
-                        let (loading_history, hit_timeline_start, model) = {
+                        let (history_request_in_flight, hit_timeline_start, model) = {
                             let model = this.model.read(cx);
                             (
-                                model.loading_history,
+                                model.history_request_in_flight(),
                                 model.hit_timeline_start,
                                 this.model.clone(),
                             )
@@ -141,7 +141,7 @@ impl TimelineView {
                             return JumpStep::Exhausted;
                         }
 
-                        if !loading_history {
+                        if !history_request_in_flight {
                             let handle = model.clone();
                             let _ = model.update(cx, |model, cx| {
                                 model.load_more_history(handle.clone(), cx);
@@ -204,6 +204,7 @@ pub(crate) fn render_avatar(
         crate::components::remote_image::RemoteImage::new(url.clone())
             .size(size)
             .avatar()
+            .high_priority()
             .fallback_text(fallback)
             .into_any_element()
     } else {
@@ -228,31 +229,26 @@ pub(crate) fn render_avatar(
 impl Render for TimelineView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model_handle = self.model.clone();
-        let (room, rendered_items, list_state, chat_style, loading_history, hit_timeline_start) = {
+        let (room, rendered_items_len, list_state, chat_style, loading_history, hit_timeline_start) = {
             let model_read = model_handle.read(cx);
             (
                 model_read.room.clone(),
-                model_read.rendered_items.clone(),
+                model_read.rendered_items.len(),
                 model_read.list_state.clone(),
                 model_read.chat_style,
                 model_read.loading_history,
                 model_read.hit_timeline_start,
             )
         };
-        let has_rendered_items = !rendered_items.is_empty();
+        let has_rendered_items = rendered_items_len != 0;
         let show_start_of_conversation = hit_timeline_start && has_rendered_items;
         let intro_row_count = if show_start_of_conversation { 2 } else { 0 };
-        let total_row_count = rendered_items.len() + intro_row_count;
+        let total_row_count = rendered_items_len + intro_row_count;
 
         if list_state.item_count() != total_row_count {
             list_state.reset(total_row_count);
         }
 
-        tracing::info!(
-            "timeline_view: rendering {} items with list_count={}",
-            rendered_items.len(),
-            list_state.item_count()
-        );
         let theme = *cx.onedark_theme();
         let highlighted_event_id = self.highlighted_event_id.clone();
         let expanded_call_groups = self.expanded_call_groups.clone();
@@ -262,8 +258,8 @@ impl Render for TimelineView {
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| "Conversation".to_string());
         let room_avatar_url = room.avatar_url().map(|url| url.to_string());
-        let rendered_items_for_list = rendered_items.clone();
         let view = cx.entity().clone();
+        let model_handle_for_rows = model_handle.clone();
         let room_name_for_rows = room_name.clone();
         let room_avatar_url_for_rows = room_avatar_url.clone();
 
@@ -284,7 +280,8 @@ impl Render for TimelineView {
             }
 
             let item_ix = ix.saturating_sub(intro_row_count);
-            let Some(item) = rendered_items_for_list.get(item_ix) else {
+            let model_read = model_handle_for_rows.read(cx);
+            let Some(item) = model_read.rendered_items.get(item_ix) else {
                 return div()
                     .px_4()
                     .py_2()

@@ -27,3 +27,18 @@ url = "2"
 open = "5"
 image = "0.25"
 regex = "1.12.3"
+
+[dev-dependencies]
+criterion = "0.6.0"
+
+[[bench]]
+name = "room_hierarchy"
+harness = false
+
+[[bench]]
+name = "timeline_diff"
+harness = false
+
+[[bench]]
+name = "avatar_pipeline"
+harness = false

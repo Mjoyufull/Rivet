@@ -1,6 +1,10 @@
 use super::*;
-use matrix_sdk::RoomMemberships;
-use std::collections::HashMap;
+use futures::stream::{self, StreamExt};
+use std::collections::{HashMap, HashSet};
+
+pub(crate) type MemberLookup = HashMap<String, (String, Option<String>)>;
+const MEMBER_LOOKUP_CONCURRENCY: usize = 16;
+const MEMBER_LOOKUP_FALLBACK_LIMIT: usize = 12;
 
 #[derive(Clone, Debug)]
 struct PendingCallEntry {
@@ -10,26 +14,31 @@ struct PendingCallEntry {
     pub timestamp: String,
 }
 
-fn flush_call_group(
-    rendered: &mut Vector<RenderedTimelineItem>,
-    pending_calls: &mut Vec<PendingCallEntry>,
-    pending_date_divider: &mut Option<String>,
-) {
-    if pending_calls.is_empty() {
+#[derive(Clone, Debug, Default)]
+struct RenderPassState {
+    last_sender: Option<String>,
+    last_minute_bucket: Option<i64>,
+    pending_calls: Vec<PendingCallEntry>,
+    pending_date_divider: Option<String>,
+}
+
+fn flush_call_group(rendered: &mut Vector<RenderedTimelineItem>, state: &mut RenderPassState) {
+    if state.pending_calls.is_empty() {
         return;
     }
 
-    if let Some(divider) = pending_date_divider.take() {
+    if let Some(divider) = state.pending_date_divider.take() {
         rendered.push_back(RenderedTimelineItem::Separator(divider));
     }
 
-    let first = &pending_calls[0];
-    let label = if pending_calls.len() == 1 {
+    let first = &state.pending_calls[0];
+    let label = if state.pending_calls.len() == 1 {
         first.content.clone()
     } else {
         "Call activity".to_string()
     };
-    let entries = pending_calls
+    let entries = state
+        .pending_calls
         .iter()
         .map(|entry| RenderedCallEntry {
             content: entry.content.clone(),
@@ -44,51 +53,166 @@ fn flush_call_group(
         entries,
     });
 
-    pending_calls.clear();
+    state.pending_calls.clear();
+}
+
+fn insert_member_lookup_entry(
+    member_lookup: &mut MemberLookup,
+    member: &matrix_sdk::room::RoomMember,
+) {
+    let user_id = member.user_id().to_string();
+    let display_name = member
+        .display_name()
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| fallback_sender_name(&user_id));
+    let avatar_url = member.avatar_url().map(|url| url.to_string());
+    member_lookup.insert(user_id, (display_name, avatar_url));
+}
+
+pub(crate) async fn extend_member_lookup_for_items<'a, I>(
+    room: &MatrixRoom,
+    member_lookup: &mut MemberLookup,
+    items: I,
+) where
+    I: IntoIterator<Item = &'a Arc<TimelineItem>>,
+{
+    let mut pending_sender_ids = Vec::new();
+    let mut seen_sender_ids = HashSet::new();
+
+    for item in items {
+        let Some(event) = item.as_event() else {
+            continue;
+        };
+
+        let sender_id = event.sender();
+        if member_lookup.contains_key(sender_id.as_str()) {
+            continue;
+        }
+
+        if let TimelineDetails::Ready(profile) = event.sender_profile() {
+            let display_name = profile
+                .display_name
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| fallback_sender_name(sender_id.as_str()));
+            let avatar_url = profile.avatar_url.as_ref().map(ToString::to_string);
+            member_lookup.insert(sender_id.to_string(), (display_name, avatar_url));
+            continue;
+        }
+
+        if seen_sender_ids.insert(sender_id.to_owned()) {
+            pending_sender_ids.push(sender_id.to_owned());
+        }
+    }
+
+    if pending_sender_ids.len() > MEMBER_LOOKUP_FALLBACK_LIMIT {
+        for sender_id in pending_sender_ids {
+            member_lookup
+                .entry(sender_id.to_string())
+                .or_insert_with(|| (fallback_sender_name(sender_id.as_str()), None));
+        }
+        return;
+    }
+
+    let room = room.clone();
+    let member_results = stream::iter(pending_sender_ids.into_iter())
+        .map(|sender_id| {
+            let room = room.clone();
+            async move {
+                let member = room.get_member_no_sync(&sender_id).await.ok().flatten();
+                (sender_id, member)
+            }
+        })
+        .buffer_unordered(MEMBER_LOOKUP_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+
+    for (sender_id, member) in member_results {
+        if let Some(member) = member {
+            insert_member_lookup_entry(member_lookup, &member);
+        } else {
+            member_lookup
+                .entry(sender_id.to_string())
+                .or_insert_with(|| (fallback_sender_name(sender_id.as_str()), None));
+        }
+    }
+}
+
+pub(crate) async fn build_member_lookup(
+    room: &MatrixRoom,
+    items: &Vector<Arc<TimelineItem>>,
+) -> MemberLookup {
+    let mut member_lookup = MemberLookup::new();
+    extend_member_lookup_for_items(room, &mut member_lookup, items.iter()).await;
+    member_lookup
 }
 
 pub(crate) async fn process_items_vector(
     room: &MatrixRoom,
     items: &Vector<Arc<TimelineItem>>,
-    _homeserver_url: &str,
-) -> Vector<RenderedTimelineItem> {
-    let member_lookup = room
-        .members_no_sync(RoomMemberships::ACTIVE)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|member| {
-            let user_id = member.user_id().to_string();
-            let display_name = member
-                .display_name()
-                .filter(|name| !name.trim().is_empty())
-                .map(str::to_string)
-                .unwrap_or_else(|| fallback_sender_name(&user_id));
-            let avatar_url = member.avatar_url().map(|url| url.to_string());
-            (user_id, (display_name, avatar_url))
-        })
-        .collect::<HashMap<_, _>>();
-    tracing::info!("timeline: processing {} raw items", items.len());
-    let mut rendered = Vector::new();
-    let now = Local::now();
-    let mut last_sender: Option<String> = None;
-    let mut last_minute_bucket: Option<i64> = None;
-    let mut pending_calls = Vec::new();
-    let mut pending_date_divider: Option<String> = None;
+) -> (MemberLookup, Vector<RenderedTimelineItem>) {
+    let member_lookup = build_member_lookup(room, items).await;
+    let rendered = process_items_vector_with_lookup(items, &member_lookup);
+    (member_lookup, rendered)
+}
 
-    for item in items.iter() {
+pub(crate) fn process_items_vector_with_lookup(
+    items: &Vector<Arc<TimelineItem>>,
+    member_lookup: &MemberLookup,
+) -> Vector<RenderedTimelineItem> {
+    let mut rendered = Vector::new();
+    let mut state = RenderPassState::default();
+    render_items(items.iter(), member_lookup, &mut rendered, &mut state);
+    flush_call_group(&mut rendered, &mut state);
+    rendered
+}
+
+pub(crate) fn process_appended_items_with_lookup(
+    previous_items: &Vector<Arc<TimelineItem>>,
+    appended_items: &[Arc<TimelineItem>],
+    member_lookup: &MemberLookup,
+) -> Option<Vector<RenderedTimelineItem>> {
+    if appended_items.is_empty()
+        || appended_items
+            .iter()
+            .any(|item| !supports_incremental_append(item))
+    {
+        return None;
+    }
+
+    let mut rendered = Vector::new();
+    let mut state = initial_append_state(previous_items);
+    render_items(
+        appended_items.iter(),
+        member_lookup,
+        &mut rendered,
+        &mut state,
+    );
+    flush_call_group(&mut rendered, &mut state);
+    Some(rendered)
+}
+
+pub(crate) fn compute_render_counts(items: &Vector<Arc<TimelineItem>>) -> Vec<usize> {
+    let mut counts = vec![0; items.len()];
+    let mut pending_date_divider_ix: Option<usize> = None;
+    let mut pending_calls: Vec<usize> = Vec::new();
+
+    for (ix, item) in items.iter().enumerate() {
         if let Some(virtual_item) = item.as_virtual() {
-            flush_call_group(&mut rendered, &mut pending_calls, &mut pending_date_divider);
-            last_sender = None;
-            last_minute_bucket = None;
+            if !pending_calls.is_empty() {
+                if let Some(divider_ix) = pending_date_divider_ix.take() {
+                    counts[divider_ix] += 1;
+                }
+                if let Some(last_call_ix) = pending_calls.last().copied() {
+                    counts[last_call_ix] += 1;
+                }
+                pending_calls.clear();
+            }
 
             match virtual_item {
-                VirtualTimelineItem::DateDivider(timestamp) => {
-                    let dt: DateTime<Local> = timestamp
-                        .to_system_time()
-                        .unwrap_or(std::time::SystemTime::now())
-                        .into();
-                    pending_date_divider = Some(format_date_divider(dt));
+                VirtualTimelineItem::DateDivider(_) => {
+                    pending_date_divider_ix = Some(ix);
                 }
                 VirtualTimelineItem::ReadMarker | VirtualTimelineItem::TimelineStart => {}
             }
@@ -96,8 +220,171 @@ pub(crate) async fn process_items_vector(
         }
 
         let Some(event) = item.as_event() else {
-            last_sender = None;
-            last_minute_bucket = None;
+            if !pending_calls.is_empty() {
+                if let Some(divider_ix) = pending_date_divider_ix.take() {
+                    counts[divider_ix] += 1;
+                }
+                if let Some(last_call_ix) = pending_calls.last().copied() {
+                    counts[last_call_ix] += 1;
+                }
+                pending_calls.clear();
+            }
+            pending_date_divider_ix = None;
+            continue;
+        };
+
+        if event_is_call_like(event.content()) {
+            pending_calls.push(ix);
+            continue;
+        }
+
+        if event_renders(event.content()) {
+            if let Some(divider_ix) = pending_date_divider_ix.take() {
+                counts[divider_ix] += 1;
+            }
+            counts[ix] += 1;
+        } else if !pending_calls.is_empty() {
+            if let Some(divider_ix) = pending_date_divider_ix.take() {
+                counts[divider_ix] += 1;
+            }
+            if let Some(last_call_ix) = pending_calls.last().copied() {
+                counts[last_call_ix] += 1;
+            }
+            pending_calls.clear();
+        }
+    }
+
+    if !pending_calls.is_empty() {
+        if let Some(divider_ix) = pending_date_divider_ix.take() {
+            counts[divider_ix] += 1;
+        }
+        if let Some(last_call_ix) = pending_calls.last().copied() {
+            counts[last_call_ix] += 1;
+        }
+    }
+
+    counts
+}
+
+fn supports_incremental_append(item: &Arc<TimelineItem>) -> bool {
+    let Some(event) = item.as_event() else {
+        return false;
+    };
+
+    !event_is_call_like(event.content())
+}
+
+fn initial_append_state(previous_items: &Vector<Arc<TimelineItem>>) -> RenderPassState {
+    let Some(last_item) = previous_items.iter().last() else {
+        return RenderPassState::default();
+    };
+
+    let Some(event) = last_item.as_event() else {
+        return RenderPassState::default();
+    };
+
+    if event_is_call_like(event.content()) {
+        return RenderPassState::default();
+    }
+
+    if !event_renders_as_chat_item(event.content()) {
+        return RenderPassState::default();
+    }
+
+    let timestamp = event
+        .timestamp()
+        .to_system_time()
+        .unwrap_or(std::time::SystemTime::now());
+    let dt: DateTime<Local> = timestamp.into();
+
+    RenderPassState {
+        last_sender: Some(event.sender().to_string()),
+        last_minute_bucket: Some(dt.timestamp() / 60),
+        ..RenderPassState::default()
+    }
+}
+
+fn event_is_call_like(content: &TimelineItemContent) -> bool {
+    match content {
+        TimelineItemContent::CallInvite | TimelineItemContent::RtcNotification => true,
+        TimelineItemContent::OtherState(other_state) => matches!(
+            other_state.content(),
+            AnyOtherFullStateEventContent::_Custom { event_type }
+                if event_type == "org.matrix.msc3401.call.member"
+        ),
+        _ => false,
+    }
+}
+
+fn event_renders(content: &TimelineItemContent) -> bool {
+    if content.as_message().is_some()
+        || content.as_sticker().is_some()
+        || content.as_unable_to_decrypt().is_some()
+    {
+        return true;
+    }
+
+    match content {
+        TimelineItemContent::MembershipChange(_)
+        | TimelineItemContent::ProfileChange(_)
+        | TimelineItemContent::FailedToParseMessageLike { .. }
+        | TimelineItemContent::FailedToParseState { .. } => true,
+        TimelineItemContent::OtherState(_) => true,
+        TimelineItemContent::MsgLike(msglike) => matches!(
+            &msglike.kind,
+            MsgLikeKind::Poll(_) | MsgLikeKind::Redacted | MsgLikeKind::Other(_)
+        ),
+        TimelineItemContent::CallInvite | TimelineItemContent::RtcNotification => false,
+    }
+}
+
+fn event_renders_as_chat_item(content: &TimelineItemContent) -> bool {
+    if let Some(message) = content.as_message() {
+        return !matches!(message.msgtype(), MessageType::ServerNotice(_));
+    }
+
+    if content.as_sticker().is_some() || content.as_unable_to_decrypt().is_some() {
+        return true;
+    }
+
+    matches!(
+        content,
+        TimelineItemContent::MsgLike(msglike) if matches!(&msglike.kind, MsgLikeKind::Poll(_))
+    )
+}
+
+fn render_items<'a, I>(
+    items: I,
+    member_lookup: &MemberLookup,
+    rendered: &mut Vector<RenderedTimelineItem>,
+    state: &mut RenderPassState,
+) where
+    I: IntoIterator<Item = &'a Arc<TimelineItem>>,
+{
+    let now = Local::now();
+
+    for item in items {
+        if let Some(virtual_item) = item.as_virtual() {
+            flush_call_group(rendered, state);
+            state.last_sender = None;
+            state.last_minute_bucket = None;
+
+            match virtual_item {
+                VirtualTimelineItem::DateDivider(timestamp) => {
+                    let dt: DateTime<Local> = timestamp
+                        .to_system_time()
+                        .unwrap_or(std::time::SystemTime::now())
+                        .into();
+                    state.pending_date_divider = Some(format_date_divider(dt));
+                }
+                VirtualTimelineItem::ReadMarker | VirtualTimelineItem::TimelineStart => {}
+            }
+            continue;
+        }
+
+        let Some(event) = item.as_event() else {
+            state.last_sender = None;
+            state.last_minute_bucket = None;
             continue;
         };
 
@@ -109,7 +396,7 @@ pub(crate) async fn process_items_vector(
         let dt: DateTime<Local> = timestamp.into();
         let formatted_timestamp = format_message_timestamp(dt, now);
         let minute_bucket = dt.timestamp() / 60;
-        let fallback_sender_name = fallback_sender_name(&sender_id);
+        let fallback_name = fallback_sender_name(&sender_id);
 
         let member_profile = member_lookup.get(&sender_id);
         let (sender_name, avatar_url) = match event.sender_profile() {
@@ -119,7 +406,7 @@ pub(crate) async fn process_items_vector(
                     .clone()
                     .filter(|name| !name.trim().is_empty())
                     .or_else(|| member_profile.map(|(name, _)| name.clone()))
-                    .unwrap_or_else(|| fallback_sender_name.clone());
+                    .unwrap_or_else(|| fallback_name.clone());
                 let avatar = profile
                     .avatar_url
                     .as_ref()
@@ -129,11 +416,11 @@ pub(crate) async fn process_items_vector(
             }
             _ => member_profile
                 .map(|(name, avatar)| (name.clone(), avatar.clone()))
-                .unwrap_or((fallback_sender_name, None)),
+                .unwrap_or((fallback_name, None)),
         };
 
-        let is_grouped =
-            last_sender.as_ref() == Some(&sender_id) && last_minute_bucket == Some(minute_bucket);
+        let is_grouped = state.last_sender.as_ref() == Some(&sender_id)
+            && state.last_minute_bucket == Some(minute_bucket);
         let id = timeline_item_id(item, Some(event));
         let reply_to = render_reply_preview(event.content().in_reply_to());
 
@@ -451,13 +738,13 @@ pub(crate) async fn process_items_vector(
             };
 
             if let Some(call_entry) = call_entry {
-                pending_calls.push(call_entry);
-                last_sender = None;
-                last_minute_bucket = None;
+                state.pending_calls.push(call_entry);
+                state.last_sender = None;
+                state.last_minute_bucket = None;
                 continue;
             }
 
-            flush_call_group(&mut rendered, &mut pending_calls, &mut pending_date_divider);
+            flush_call_group(rendered, state);
 
             let is_chat_item = matches!(
                 rendered_item,
@@ -465,21 +752,16 @@ pub(crate) async fn process_items_vector(
             );
 
             if is_chat_item {
-                last_sender = Some(sender_id);
-                last_minute_bucket = Some(minute_bucket);
+                state.last_sender = Some(sender_id);
+                state.last_minute_bucket = Some(minute_bucket);
             } else {
-                last_sender = None;
-                last_minute_bucket = None;
+                state.last_sender = None;
+                state.last_minute_bucket = None;
             }
 
             rendered.push_back(rendered_item);
         }
     }
-
-    flush_call_group(&mut rendered, &mut pending_calls, &mut pending_date_divider);
-
-    tracing::info!("timeline: produced {} rendered items", rendered.len());
-    rendered
 }
 
 fn image_dimensions(info: &matrix_sdk::ruma::events::room::ImageInfo) -> Option<(u32, u32)> {

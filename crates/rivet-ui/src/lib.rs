@@ -2,6 +2,7 @@ pub mod app;
 pub mod auth;
 pub mod components;
 pub mod models;
+pub mod perf;
 pub mod rooms;
 pub mod security;
 pub mod settings;

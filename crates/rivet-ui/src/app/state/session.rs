@@ -1,5 +1,6 @@
 use super::AppView;
 use crate::models::image_cache::ImageCache;
+use crate::perf;
 use crate::rooms::RoomListModel;
 use crate::security::verification::VerificationModel;
 use crate::sidebar::{Sidebar, SidebarEvent};
@@ -10,12 +11,15 @@ use matrix_sdk::ruma::RoomId;
 use matrix_sdk_ui::timeline::RoomExt;
 use rivet_core::client::RivetClient;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 impl AppView {
     pub(super) fn reset_logged_out_state(&mut self, cx: &mut Context<Self>) {
         self.is_logged_in = false;
         self.room_list_model = None;
         self.active_timeline_model = None;
+        self.cached_timeline_models.clear();
+        self.cached_chat_views.clear();
         self.active_chat_view = None;
         self.verification_model = None;
         self.verification_gate_active = false;
@@ -77,6 +81,12 @@ impl AppView {
                 this.active_chat_view = None;
 
                 if let (Some(room_id_str), Some(client)) = (selected_id, &this.client) {
+                    if let Some(model) = this.cached_timeline_models.get(&room_id_str).cloned() {
+                        this.active_timeline_model = Some(model);
+                        cx.notify();
+                        return;
+                    }
+
                     tracing::info!("Attempting to open room: {}", room_id_str);
                     if let Ok(room_id) = RoomId::parse(&room_id_str) {
                         if let Some(room) = client.client().get_room(&room_id) {
@@ -88,9 +98,15 @@ impl AppView {
                             async_cx
                                 .clone()
                                 .spawn(move |_: &mut AsyncApp| async move {
-                                    tracing::info!("Building timeline for room: {}", room_id);
+                                    let build_started = Instant::now();
                                     match room.timeline_builder().build().await {
                                         Ok(timeline) => {
+                                            perf::log_if_slow(
+                                                "room.open.timeline_builder",
+                                                build_started,
+                                                Duration::from_millis(60),
+                                                || format!("room={room_id}"),
+                                            );
                                             let timeline = Arc::new(timeline);
                                             let _ = async_cx.update(|cx| {
                                                 let _ = this_handle.update(
@@ -109,13 +125,25 @@ impl AppView {
                                                             cx,
                                                         );
                                                         TimelineModel::init(model.clone(), cx);
-                                                        view.active_timeline_model = Some(model);
+                                                        view.cached_timeline_models
+                                                            .insert(room_id.to_string(), model.clone());
+                                                        if view.active_room_id.as_deref()
+                                                            == Some(room_id.as_str())
+                                                        {
+                                                            view.active_timeline_model = Some(model);
+                                                        }
                                                         cx.notify();
                                                     },
                                                 );
                                             });
                                         }
                                         Err(e) => {
+                                            perf::log_if_slow(
+                                                "room.open.timeline_builder",
+                                                build_started,
+                                                Duration::from_millis(60),
+                                                || format!("room={room_id} error={e:?}"),
+                                            );
                                             tracing::error!(
                                                 "Failed to build timeline for room {}: {:?}",
                                                 room_id,

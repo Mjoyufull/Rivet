@@ -12,6 +12,7 @@ use crate::sidebar::Sidebar;
 use crate::timeline::TimelineModel;
 use gpui::*;
 use rivet_core::client::RivetClient;
+use std::collections::HashMap;
 
 pub(crate) struct AppView {
     sidebar: Entity<Sidebar>,
@@ -22,6 +23,8 @@ pub(crate) struct AppView {
     client: Option<RivetClient>,
     pub(crate) room_list_model: Option<Entity<RoomListModel>>,
     pub(crate) active_timeline_model: Option<Entity<TimelineModel>>,
+    pub(crate) cached_timeline_models: HashMap<String, Entity<TimelineModel>>,
+    pub(crate) cached_chat_views: HashMap<String, Entity<ChatView>>,
     active_chat_view: Option<Entity<ChatView>>,
     pub(crate) details_panel_preferences: DetailsPanelPreferences,
     verification_model: Option<Entity<VerificationModel>>,
@@ -49,6 +52,8 @@ impl AppView {
             client: None,
             room_list_model: None,
             active_timeline_model: None,
+            cached_timeline_models: HashMap::new(),
+            cached_chat_views: HashMap::new(),
             active_chat_view: None,
             details_panel_preferences: DetailsPanelPreferences::default(),
             verification_model: None,

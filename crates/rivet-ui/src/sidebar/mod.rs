@@ -1,7 +1,5 @@
 mod footer;
-mod people_list;
 mod rail;
-mod rooms_list;
 mod view;
 
 use crate::rooms::RoomListModel;
@@ -21,6 +19,7 @@ pub struct Sidebar {
     pub display_name: String,
     pub avatar_url: Option<String>,
     pub sync_status: String,
+    pub scroll_handle: UniformListScrollHandle,
 }
 
 impl Sidebar {
@@ -45,6 +44,7 @@ impl Sidebar {
             display_name,
             avatar_url: None,
             sync_status: "Idle".to_string(),
+            scroll_handle: UniformListScrollHandle::new(),
         }
     }
 }

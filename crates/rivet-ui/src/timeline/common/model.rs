@@ -19,10 +19,19 @@ use matrix_sdk_ui::timeline::{
     RoomMembershipChange, Timeline, TimelineDetails, TimelineItem, TimelineItemContent,
     VirtualTimelineItem,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-const INITIAL_HISTORY_BATCH_SIZE: u16 = 60;
-const HISTORY_BATCH_SIZE: u16 = 80;
+const INITIAL_HISTORY_WARMUP_FIRST_BATCH_SIZE: u16 = 8;
+const INITIAL_HISTORY_WARMUP_FOLLOWUP_BATCH_SIZE: u16 = 12;
+const INITIAL_HISTORY_WARMUP_MAX_PASSES: usize = 2;
+const INITIAL_HISTORY_WARMUP_TARGET_RENDERED_ITEMS: usize = 20;
+const INITIAL_HISTORY_WARMUP_DELAY_MS: u64 = 140;
+const INITIAL_HISTORY_WARMUP_CONTINUE_BUDGET_MS: u64 = 220;
+const HISTORY_BATCH_SIZE_INITIAL: u16 = 48;
+const HISTORY_BATCH_SIZE_MIN: u16 = 20;
+const HISTORY_BATCH_SIZE_MAX: u16 = 80;
 const HISTORY_PREFETCH_THRESHOLD: usize = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -102,11 +111,17 @@ pub struct TimelineModel {
     pub timeline: Arc<Timeline>,
     pub items: Vector<Arc<TimelineItem>>,
     pub rendered_items: Vector<RenderedTimelineItem>,
+    pub member_lookup: HashMap<String, (String, Option<String>)>,
+    pub render_counts: Vec<usize>,
+    pub incremental_render_counts_available: bool,
     pub list_state: ListState,
     pub homeserver_url: String,
     pub chat_style: ChatStyle,
     pub loading_history: bool,
+    pub warming_history: bool,
     pub hit_timeline_start: bool,
+    pub history_batch_size: u16,
+    pub last_history_page_latency_ms: Option<u64>,
 }
 
 impl EventEmitter<()> for TimelineModel {}
@@ -571,11 +586,17 @@ impl TimelineModel {
             timeline,
             items: Vector::new(),
             rendered_items: Vector::new(),
+            member_lookup: HashMap::new(),
+            render_counts: Vec::new(),
+            incremental_render_counts_available: true,
             list_state,
             homeserver_url,
             chat_style: ChatStyle::default(),
             loading_history: false,
+            warming_history: false,
             hit_timeline_start: false,
+            history_batch_size: HISTORY_BATCH_SIZE_INITIAL,
+            last_history_page_latency_ms: None,
         });
 
         stream::install_scroll_handler(&model, cx);
@@ -584,6 +605,19 @@ impl TimelineModel {
 
     pub fn load_more_history(&mut self, model_handle: Entity<Self>, cx: &mut App) {
         stream::load_more_history(self, model_handle, cx);
+    }
+
+    pub fn history_request_in_flight(&self) -> bool {
+        self.loading_history || self.warming_history
+    }
+
+    pub fn next_history_batch_size(&self) -> u16 {
+        self.history_batch_size
+    }
+
+    pub fn record_history_page_result(&mut self, elapsed: Duration) {
+        self.last_history_page_latency_ms = Some(elapsed.as_millis() as u64);
+        self.history_batch_size = adapt_history_batch_size(self.history_batch_size, elapsed);
     }
 
     pub fn init(model: Entity<Self>, cx: &mut App) {
@@ -602,4 +636,19 @@ impl TimelineModel {
             }
         });
     }
+}
+
+fn adapt_history_batch_size(current: u16, elapsed: Duration) -> u16 {
+    let millis = elapsed.as_millis() as u64;
+
+    let next = match millis {
+        0..=120 => current.saturating_add(8),
+        121..=250 => current.saturating_add(4),
+        251..=450 => current,
+        451..=800 => current.saturating_sub(8),
+        801..=1400 => current.saturating_sub(16),
+        _ => current.saturating_div(2),
+    };
+
+    next.clamp(HISTORY_BATCH_SIZE_MIN, HISTORY_BATCH_SIZE_MAX)
 }

@@ -112,6 +112,7 @@ pub(crate) fn render_image_stack(
     .with_source(source.clone())
     .with_mimetype(mimetype.cloned())
     .frame_size(frame_width, frame_height)
+    .high_priority()
     .object_fit(ObjectFit::Contain);
     div()
         .flex_col()

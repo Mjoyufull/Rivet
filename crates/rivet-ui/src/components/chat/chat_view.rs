@@ -214,6 +214,7 @@ impl Render for ChatView {
                                     crate::components::remote_image::RemoteImage::new(url)
                                         .size(px(40.0))
                                         .avatar()
+                                        .high_priority()
                                         .fallback_text(fallback)
                                         .into_any_element()
                                 } else {

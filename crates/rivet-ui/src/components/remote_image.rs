@@ -1,4 +1,5 @@
 use crate::models::appearance::{avatar_radius_for, get_image_radius};
+use crate::models::image_cache::ImagePriority;
 use gpui::ObjectFit;
 use gpui::*;
 use gpui_component::StyledExt;
@@ -12,6 +13,7 @@ pub struct RemoteImage {
     size: Option<Pixels>,
     frame_size: Option<Size<Pixels>>,
     is_avatar: bool,
+    priority: ImagePriority,
     object_fit: Option<ObjectFit>,
     fallback_text: Option<String>,
 }
@@ -35,6 +37,7 @@ impl RemoteImage {
             size: None,
             frame_size: None,
             is_avatar: false,
+            priority: ImagePriority::Normal,
             object_fit: None,
             fallback_text: None,
         }
@@ -70,6 +73,16 @@ impl RemoteImage {
         self
     }
 
+    pub fn high_priority(mut self) -> Self {
+        self.priority = ImagePriority::High;
+        self
+    }
+
+    pub fn low_priority(mut self) -> Self {
+        self.priority = ImagePriority::Low;
+        self
+    }
+
     /// Mark this image as an avatar for thumbnail optimization
     pub fn avatar(mut self) -> Self {
         self.is_avatar = true;
@@ -82,25 +95,30 @@ impl RemoteImage {
 }
 
 impl RenderOnce for RemoteImage {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // Mark as avatar for thumbnail optimization
-        if self.is_avatar && !self.url.is_empty() {
-            cx.update_global::<crate::models::image_cache::ImageCache, _>(|this, _cx| {
-                this.mark_as_avatar(self.url.clone());
-            });
-        }
-
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let requester = window.current_view();
         let image = if self.url.is_empty() && self.source.is_none() {
             None
         } else if let Some(source) = self.source {
             cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
                 |this, cx| {
-                    this.get_media_source(source, self.url.clone(), self.mimetype.clone(), cx)
+                    this.get_media_source(
+                        source,
+                        self.url.clone(),
+                        self.mimetype.clone(),
+                        requester,
+                        self.priority,
+                        cx,
+                    )
                 },
+            )
+        } else if self.is_avatar {
+            cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
+                |this, cx| this.get_avatar(self.url.clone(), requester, self.priority, cx),
             )
         } else {
             cx.update_global::<crate::models::image_cache::ImageCache, Option<Arc<Image>>>(
-                |this, cx| this.get(self.url.clone(), cx),
+                |this, cx| this.get(self.url.clone(), requester, self.priority, cx),
             )
         };
 

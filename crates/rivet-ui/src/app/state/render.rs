@@ -29,6 +29,7 @@ fn render_space_avatar(
         RemoteImage::new(url.clone())
             .size(size)
             .avatar()
+            .low_priority()
             .fallback_text(fallback)
             .into_any_element()
     } else {
@@ -253,19 +254,41 @@ impl AppView {
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.active_timeline_model.is_some() && self.active_chat_view.is_none() {
-            let model = self.active_timeline_model.as_ref().unwrap().clone();
-            let room_list_model = self.room_list_model.as_ref().unwrap().clone();
-            let details_panel_preferences = self.details_panel_preferences.clone();
-            let chat_view = cx.new(|cx| {
-                crate::components::chat::ChatView::new(
-                    room_list_model,
-                    model,
-                    details_panel_preferences,
-                    window,
-                    cx,
-                )
-            });
-            self.active_chat_view = Some(chat_view);
+            let room_id = self.active_room_id.clone();
+            if let Some(room_id) = room_id {
+                if let Some(chat_view) = self.cached_chat_views.get(&room_id).cloned() {
+                    self.active_chat_view = Some(chat_view);
+                } else {
+                    let model = self.active_timeline_model.as_ref().unwrap().clone();
+                    let room_list_model = self.room_list_model.as_ref().unwrap().clone();
+                    let details_panel_preferences = self.details_panel_preferences.clone();
+                    let chat_view = cx.new(|cx| {
+                        crate::components::chat::ChatView::new(
+                            room_list_model,
+                            model,
+                            details_panel_preferences,
+                            window,
+                            cx,
+                        )
+                    });
+                    self.cached_chat_views.insert(room_id, chat_view.clone());
+                    self.active_chat_view = Some(chat_view);
+                }
+            } else {
+                let model = self.active_timeline_model.as_ref().unwrap().clone();
+                let room_list_model = self.room_list_model.as_ref().unwrap().clone();
+                let details_panel_preferences = self.details_panel_preferences.clone();
+                let chat_view = cx.new(|cx| {
+                    crate::components::chat::ChatView::new(
+                        room_list_model,
+                        model,
+                        details_panel_preferences,
+                        window,
+                        cx,
+                    )
+                });
+                self.active_chat_view = Some(chat_view);
+            }
         }
         let theme = *cx.onedark_theme();
         let navigation_preferences = ui_preferences::ui_preferences(cx);
@@ -414,6 +437,7 @@ impl Render for AppView {
                                     crate::components::remote_image::RemoteImage::new(url.clone())
                                         .size(px(96.0))
                                         .avatar()
+                                        .high_priority()
                                         .fallback_text(fallback)
                                         .into_any_element()
                                 } else {
@@ -480,6 +504,7 @@ impl Render for AppView {
                                 crate::components::remote_image::RemoteImage::new(url.clone())
                                     .size(px(96.0))
                                     .avatar()
+                                    .high_priority()
                                     .fallback_text(fallback)
                                     .into_any_element()
                             } else {

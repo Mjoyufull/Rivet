@@ -10,7 +10,34 @@ pub struct DirectRoomProfile {
     pub avatar_url: Option<String>,
 }
 
+pub async fn resolve_direct_room_profile_cached(room: &MatrixRoom) -> Option<DirectRoomProfile> {
+    let own_user_id = room.own_user_id().to_string();
+    let direct_targets = room
+        .direct_targets()
+        .into_iter()
+        .map(|target| target.to_string())
+        .collect::<HashSet<_>>();
+
+    let members = room
+        .members_no_sync(RoomMemberships::ACTIVE)
+        .await
+        .ok()
+        .unwrap_or_default();
+
+    let counterpart = select_direct_counterpart(&members, &own_user_id, &direct_targets)?;
+
+    Some(DirectRoomProfile {
+        user_id: counterpart.user_id().to_string(),
+        display_name: member_display_name(counterpart),
+        avatar_url: counterpart.avatar_url().map(|url| url.to_string()),
+    })
+}
+
 pub async fn resolve_direct_room_profile(room: &MatrixRoom) -> Option<DirectRoomProfile> {
+    if let Some(profile) = resolve_direct_room_profile_cached(room).await {
+        return Some(profile);
+    }
+
     let own_user_id = room.own_user_id().to_string();
     let direct_targets = room
         .direct_targets()
@@ -19,17 +46,12 @@ pub async fn resolve_direct_room_profile(room: &MatrixRoom) -> Option<DirectRoom
         .collect::<HashSet<_>>();
 
     let memberships = RoomMemberships::ACTIVE;
-    let local_members = room.members_no_sync(memberships).await.ok();
-    let members = if room.are_members_synced() {
-        local_members.unwrap_or_default()
-    } else {
-        let _ = room.sync_members().await;
-        room.members(memberships)
-            .await
-            .ok()
-            .or(local_members)
-            .unwrap_or_default()
-    };
+    if room.are_members_synced() {
+        return None;
+    }
+
+    let _ = room.sync_members().await;
+    let members = room.members(memberships).await.ok().unwrap_or_default();
 
     let counterpart = select_direct_counterpart(&members, &own_user_id, &direct_targets)?;
 

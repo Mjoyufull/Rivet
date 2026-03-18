@@ -63,6 +63,7 @@ impl RenderOnce for SidebarFooter {
                                 RemoteImage::new(url)
                                     .size(px(40.0))
                                     .avatar()
+                                    .low_priority()
                                     .fallback_text(fallback)
                                     .into_any_element()
                             } else {
